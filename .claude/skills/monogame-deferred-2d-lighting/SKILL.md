@@ -110,6 +110,7 @@ Always call `Textures[i] = null` before `SetRenderTarget` on an RT that was just
 each intermediate RT — invaluable when a pass goes black.
 
 # What carries over to 3D deferred lighting (and what does not)
+The 3D version was built and verified afterwards — see monogame-deferred-3d-lighting for the tested details.
 Transfers unchanged:
 - The pass shape: G-buffer → light accumulation RT (rgb diffuse, a = spec) → composite `albedo * light + spec` →
   emissive additive → half-res bright-pass/blur → final combine.
