@@ -18,9 +18,6 @@ Pass 7  backbuffer FinalCombine (scene + bloom, optional vignette)
 ```
 Two SpriteBatch passes replace MRT (not available with SpriteBatch on the GL profile).
 
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
-
 # Suggested structure
 - A `RenderPipeline.RenderFrame(view, zoom, drawScene, lights, drawEmissive, drawOverlay)` that runs all passes and
   calls `drawScene` twice (albedo pass, normal pass).
@@ -29,9 +26,6 @@ Two SpriteBatch passes replace MRT (not available with SpriteBatch on the GL pro
 - A `LightManager` holding persistent lights plus short `Flash()` transients, returning culled, strongest-first lights
   so a single-pass variant can take the top N.
 - One `GraphicsStates` object owning every custom state.
-
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
 
 # Coordinate trick that keeps the shader matrix-free
 Camera never rotates ⇒ view space == render-target pixel space ⇒ tangent-space normals of axis-aligned sprites are already
@@ -57,9 +51,6 @@ Normal maps: +X right, +Y **down**, +Z toward viewer (DirectX-style green). Rota
 draw them in the normal pass through a pixel-shader-only technique that rotates the sampled normal by the sprite's
 angle (the batch wrapper can do this automatically when a rotation is given), or use radially symmetric normal maps.
 
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
-
 # Render targets
 
 ```csharp
@@ -67,9 +58,6 @@ _albedoRT = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat
 _bloomA   = new RenderTarget2D(gd, w/2, h/2, false, SurfaceFormat.Color, DepthFormat.None); // ×2 half res
 // recreate when PresentationParameters.BackBuffer size changes (call an EnsureRenderTargets() at top of Draw)
 ```
-
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
 
 # States (create once, never per frame)
 
@@ -86,18 +74,12 @@ _tint        = new BlendState { ColorSourceBlend = Blend.BlendFactor, ColorDesti
 ```
 Restore `BlendState.Opaque` / `DepthStencilState.None` / a solid rasterizer after each pass; SpriteBatch.Begin sets its own.
 
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
-
 # Tiled floor with a wrap sampler (one draw call)
 ```csharp
 _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Opaque, _tileSampler, DepthStencilState.None, RasterizerState.CullNone, null, _view);
 _spriteBatch.Draw(floorTex, new Rectangle(0,0,World,World), new Rectangle(0,0,World,World), Color.White); // source > texture ⇒ tiles
 _spriteBatch.End();
 ```
-
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
 
 # Per-light pass with scissor clipping
 ```csharp
@@ -116,9 +98,6 @@ foreach (var l in lights)
 Because attenuation hits exactly zero at the radius, the scissor clip is invisible. Alternative single-pass: upload arrays
 of ≤8 lights and use an unrolled loop technique (keep a toggle to compare).
 
-#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
-> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
-
 # Composite / final
 ```csharp
 gd.SetRenderTarget(_sceneRT); gd.BlendState = BlendState.Opaque;
@@ -129,3 +108,27 @@ gd.SetRenderTarget(null); technique "FinalCombine" (AlbedoTex=_sceneRT, BloomTex
 ```
 Always call `Textures[i] = null` before `SetRenderTarget` on an RT that was just sampled. Provide debug keys that `Blit`
 each intermediate RT — invaluable when a pass goes black.
+
+# What carries over to 3D deferred lighting (and what does not)
+Transfers unchanged:
+- The pass shape: G-buffer → light accumulation RT (rgb diffuse, a = spec) → composite `albedo * light + spec` →
+  emissive additive → half-res bright-pass/blur → final combine.
+- Additive light accumulation with per-light clipping, and an attenuation that is exactly 0 at the radius
+  (`x = saturate(1 - d²/r²); atten = x²`) so the clip boundary is invisible.
+- Ambient as the light buffer's clear colour; strongest-first culled light list with a single-pass ≤8-light fallback.
+- All the state discipline: unbind an RT (`Textures[i] = null`) before rendering into it, states created once, debug
+  blits of every intermediate, `EnsureRenderTargets()` on resize.
+Changes for 3D:
+- G-buffer needs a **world-space normal and a way to get position**: either a `Single` depth RT reconstructed with the
+  inverse view-projection (`P = mul(float4(ndc.xy, depth, 1), InvViewProj); P /= P.w`), or a position RT. The 2D
+  "position = UV × ScreenSize on z = 0" trick only works because that camera never rotates.
+- The two-SpriteBatch-pass substitute for MRT is a SpriteBatch limitation; custom-effect geometry can use
+  `SetRenderTargets(rt0, rt1, ...)` on HiDef (DesktopGL supports multiple colour targets), so albedo+normal+depth
+  can be written in one geometry pass — and the skinning in monogame-skinning-shader happens in that pass, once.
+- Light clipping is a **sphere/volume**, not a scissor rectangle: draw a low-poly sphere per light (front faces,
+  depth test off, or back faces with depth-greater) or project the sphere to a screen rect and keep the scissor.
+- Specular needs the real view vector (`V = normalize(CameraPos - P)`), not the constant `(0,0,1)`.
+- Shadows per light are a separate map each (only the 2D pipeline gets away with none); a deferred setup usually
+  keeps one shadowed key light and leaves point lights unshadowed.
+- Lighting in linear space with a tone map at the end (monogame-skinning-shader) matters more once many lights
+  accumulate — additive sRGB light clips early.
