@@ -1,0 +1,10 @@
+bin/
+obj/
+Content/bin/
+Content/obj/
+*.user
+*.suo
+.vs/
+.vscode/
+screenshot_*.png
+run.log

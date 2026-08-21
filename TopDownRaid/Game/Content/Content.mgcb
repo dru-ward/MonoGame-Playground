@@ -1,0 +1,76 @@
+#----------------------------- Global Properties ----------------------------#
+
+/outputDir:bin/$(Platform)
+/intermediateDir:obj/$(Platform)
+/platform:DesktopGL
+/config:
+/profile:Reach
+/compress:False
+
+#-------------------------------- References --------------------------------#
+
+
+#---------------------------------- Content ---------------------------------#
+
+#begin Shaders/Deferred.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Shaders/Deferred.fx
+
+# ---------------------------------------------------------------------------
+# Optional real art. The game generates all textures procedurally, but if these
+# entries are un-commented (and the PNGs exist under Content/Textures) then
+# Game1.LoadOrGenerate() will load them instead of the procedural versions.
+# Normal maps MUST be built with ColorKeyEnabled=False and PremultiplyAlpha=False
+# so the encoded XYZ channels are not altered by the pipeline.
+# ---------------------------------------------------------------------------
+##begin Textures/floor_albedo.png
+#/importer:TextureImporter
+#/processor:TextureProcessor
+#/processorParam:ColorKeyEnabled=False
+#/processorParam:GenerateMipmaps=True
+#/processorParam:PremultiplyAlpha=True
+#/processorParam:ResizeToPowerOfTwo=False
+#/processorParam:TextureFormat=Color
+#/build:Textures/floor_albedo.png
+
+##begin Textures/floor_normal.png
+#/importer:TextureImporter
+#/processor:TextureProcessor
+#/processorParam:ColorKeyEnabled=False
+#/processorParam:GenerateMipmaps=True
+#/processorParam:PremultiplyAlpha=False
+#/processorParam:ResizeToPowerOfTwo=False
+#/processorParam:TextureFormat=Color
+#/build:Textures/floor_normal.png
+
+##begin Textures/crate_albedo.png
+#/importer:TextureImporter
+#/processor:TextureProcessor
+#/processorParam:ColorKeyEnabled=False
+#/processorParam:GenerateMipmaps=False
+#/processorParam:PremultiplyAlpha=True
+#/processorParam:ResizeToPowerOfTwo=False
+#/processorParam:TextureFormat=Color
+#/build:Textures/crate_albedo.png
+
+##begin Textures/crate_normal.png
+#/importer:TextureImporter
+#/processor:TextureProcessor
+#/processorParam:ColorKeyEnabled=False
+#/processorParam:GenerateMipmaps=False
+#/processorParam:PremultiplyAlpha=False
+#/processorParam:ResizeToPowerOfTwo=False
+#/processorParam:TextureFormat=Color
+#/build:Textures/crate_normal.png
+
+##begin Textures/particle.png
+#/importer:TextureImporter
+#/processor:TextureProcessor
+#/processorParam:ColorKeyEnabled=False
+#/processorParam:GenerateMipmaps=False
+#/processorParam:PremultiplyAlpha=True
+#/processorParam:ResizeToPowerOfTwo=False
+#/processorParam:TextureFormat=Color
+#/build:Textures/particle.png
