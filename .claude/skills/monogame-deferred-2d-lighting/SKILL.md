@@ -3,6 +3,9 @@ name: monogame-deferred-2d-lighting
 description: Deferred-style 2D/2.5D lighting pipeline for MonoGame — albedo + normal G-buffer render targets drawn with two SpriteBatch passes (no MRT needed on the GL profile), per-pixel normal-mapped point lights accumulated with an additive BlendState and a scissor RasterizerState, a matrix-free light shader that reconstructs pixel position from UV because the camera never rotates, composite, half-res bloom, final combine, and explicit graphics-state management with debug blits of every intermediate target. Use when adding dynamic lights, normal maps, or multi-pass render-target rendering to a 2D MonoGame game.
 ---
 
+> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
 # Deferred-style 2D lighting pipeline
 
 ```
@@ -15,7 +18,10 @@ Pass 7  backbuffer FinalCombine (scene + bloom, optional vignette)
 ```
 Two SpriteBatch passes replace MRT (not available with SpriteBatch on the GL profile).
 
-## Suggested structure
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# Suggested structure
 - A `RenderPipeline.RenderFrame(view, zoom, drawScene, lights, drawEmissive, drawOverlay)` that runs all passes and
   calls `drawScene` twice (albedo pass, normal pass).
 - A `SceneBatch` wrapper as the only API scene code sees (`DrawTiled/DrawRect/Draw/DrawRotated` on albedo+normal
@@ -24,7 +30,10 @@ Two SpriteBatch passes replace MRT (not available with SpriteBatch on the GL pro
   so a single-pass variant can take the top N.
 - One `GraphicsStates` object owning every custom state.
 
-## Coordinate trick that keeps the shader matrix-free
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# Coordinate trick that keeps the shader matrix-free
 Camera never rotates ⇒ view space == render-target pixel space ⇒ tangent-space normals of axis-aligned sprites are already
 in screen space. Transform light positions on the CPU and reconstruct pixel position from UV in the shader:
 
@@ -48,7 +57,10 @@ Normal maps: +X right, +Y **down**, +Z toward viewer (DirectX-style green). Rota
 draw them in the normal pass through a pixel-shader-only technique that rotates the sampled normal by the sprite's
 angle (the batch wrapper can do this automatically when a rotation is given), or use radially symmetric normal maps.
 
-## Render targets
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# Render targets
 
 ```csharp
 _albedoRT = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None);   // ×4 full res (albedo, normal, light, scene)
@@ -56,7 +68,10 @@ _bloomA   = new RenderTarget2D(gd, w/2, h/2, false, SurfaceFormat.Color, DepthFo
 // recreate when PresentationParameters.BackBuffer size changes (call an EnsureRenderTargets() at top of Draw)
 ```
 
-## States (create once, never per frame)
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# States (create once, never per frame)
 
 ```csharp
 _additive = new BlendState { ColorSourceBlend = Blend.One, ColorDestinationBlend = Blend.One, ColorBlendFunction = BlendFunction.Add,
@@ -71,14 +86,20 @@ _tint        = new BlendState { ColorSourceBlend = Blend.BlendFactor, ColorDesti
 ```
 Restore `BlendState.Opaque` / `DepthStencilState.None` / a solid rasterizer after each pass; SpriteBatch.Begin sets its own.
 
-## Tiled floor with a wrap sampler (one draw call)
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# Tiled floor with a wrap sampler (one draw call)
 ```csharp
 _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Opaque, _tileSampler, DepthStencilState.None, RasterizerState.CullNone, null, _view);
 _spriteBatch.Draw(floorTex, new Rectangle(0,0,World,World), new Rectangle(0,0,World,World), Color.White); // source > texture ⇒ tiles
 _spriteBatch.End();
 ```
 
-## Per-light pass with scissor clipping
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# Per-light pass with scissor clipping
 ```csharp
 gd.SetRenderTarget(_lightRT); gd.Clear(new Color(0.12f,0.12f,0.17f,0f));  // ambient rgb (starting value), 0 spec
 gd.BlendState = _additive; gd.RasterizerState = _scissor; SetRtSamplers(); _pNormalTex.SetValue(_normalRT);
@@ -95,7 +116,10 @@ foreach (var l in lights)
 Because attenuation hits exactly zero at the radius, the scissor clip is invisible. Alternative single-pass: upload arrays
 of ≤8 lights and use an unrolled loop technique (keep a toggle to compare).
 
-## Composite / final
+#> Colour space: this pipeline lights and composites directly in sRGB (no linearisation, no tone map); the numbers
+> below assume that. Do not combine with the linear-light/tone-mapped conventions in monogame-skinning-shader.
+
+# Composite / final
 ```csharp
 gd.SetRenderTarget(_sceneRT); gd.BlendState = BlendState.Opaque;
 _pAlbedoTex.SetValue(_albedoRT); _pLightTex.SetValue(_lightRT); technique "Composite"; quad

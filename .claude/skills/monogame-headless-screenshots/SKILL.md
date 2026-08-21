@@ -36,6 +36,13 @@ if (_shotTarget != null) {
   next `dotnet build` (kill stray instances first: `taskkill /IM App.exe /F`).
 * Shell wrapper: launch, poll for the PNG (up to ~30 s), `ls -la` it. Then view the PNG with an image-capable reader.
 
+## Env vars vs command-line options
+monogame-project-setup / monogame-game-architecture use environment variables (`<PREFIX>_SCREENSHOT`,
+`<PREFIX>_SHOT_DELAY`, `<PREFIX>_VIEW`, `<PREFIX>_BOT`) and save the back buffer with `GetBackBufferData`; this skill
+uses `--key value` arguments and an MSAA render target. They are the same idea — pick one per project. Arguments are
+easier to pass from `Start-Process`/scripts on Windows; env vars are easier from bash one-liners. The offscreen
+render target is required when the back buffer is multisampled (`GetBackBufferData` cannot read an MSAA surface).
+
 ## Make state reachable from the command line
 Expose everything the screenshot needs as options so captures are deterministic:
 `--yaw --pitch --dist` camera, `--focus n --ty fraction` target a character, `--clip n` animation, `--varied`,

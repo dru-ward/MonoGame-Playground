@@ -27,7 +27,8 @@ lines. The `SetValue(Matrix[])` on a `float4x3 Bones[N]` parameter works exactly
 * `vs_3_0` has 256 float4 constant registers: `float4x3 Bones[64]` (192) + matrices fits; `Bones[72]` also fits
   if the rest stays small. Use `float4x3`, not `float4x4`.
 * Loops in `ps_3_0` must be `[unroll]`-able (the 3×3 PCF loop is fine).
-* A `SpriteFont` (`FontDescriptionImporter`) builds from any installed TTF (`Segoe UI`, `Arial`) — useful for HUDs.
+* A `SpriteFont` (`FontDescriptionImporter`) builds from an installed TTF — fine for a dev HUD on one machine, but it
+  ties the content build to that machine's fonts; monogame-hud-pixel-font has the portable, asset-free alternative.
 
 ## Skinning (vertex shader)
 ```hlsl
@@ -60,6 +61,9 @@ fog, then tone map: color = 1 - exp(-color * 1.5); color = pow(color, 1/2.2)
 * Key light ≈ 1.7× white-warm, fill ≈ 0.16–0.24 cool, sky 0.2–0.28, ground 0.07–0.1, rim 0.28–0.42. Lower
   values look washed out; the first attempt with rim 0.55 and ambient 0.3 read as grey haze.
 * Clear the backbuffer with the tone-mapped fog colour (apply the same curve in C#) so fog blends seamlessly.
+* Scope: this is a linear-light pipeline (3D, tone-mapped). The 2D skills (monogame-deferred-2d-lighting,
+  monogame-hlsl-effects post-processing) deliberately light in sRGB space with no linearise/encode step — mixing the two
+  conventions inside one pipeline is the conflict to avoid, not either choice on its own.
 * **Double gamma is the classic mistake**: vertex colours are already sRGB. Linearise them, light in linear, and
   gamma-encode once at the end. Skipping the linearise step makes everything pastel/overexposed.
 
@@ -86,5 +90,7 @@ startup. Sample twice with object-space `xy` and `zy` (poor-man's biplanar) and 
    leaves depth off and alpha blending on, which silently breaks the next frame's 3D pass.
 * `GraphicsProfile.HiDef`, `PreferMultiSampling = true` and `PresentationParameters.MultiSampleCount = 8` in
   `PreparingDeviceSettings` give MSAA on DesktopGL.
-* Sampler slots: bind `PointClamp` for the shadow map and `LinearWrap` for grain (`SamplerStates[0..1]`); the
-  `sampler_state` blocks in HLSL are honoured on DX but set them from C# too for GL.
+* Sampler slots: declare samplers with only `Texture = <...>` in the `.fx` (no Filter/Address — see
+  monogame-hlsl-effects) and set `SamplerStates[0] = PointClamp` (shadow map) and `SamplerStates[1] = LinearWrap`
+  (grain) from C#; filter settings written inside `sampler_state` are not reliably applied on the OpenGL path.
+* No HLSL initialisers (`float Wrap = 0.25;`) — they are ignored on OpenGL; set every parameter from C# each frame.
