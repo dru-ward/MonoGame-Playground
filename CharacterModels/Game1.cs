@@ -39,7 +39,6 @@ public class Game1 : Game
     private int _frame;
     // Play mode (focused character is player-controlled)
     private Vector3 _moveVel;
-    private Clip? _action;
     private const float WalkSpeed = 1.6f, RunSpeed = 4.4f;
 
     private KeyboardState _prevKeys;
@@ -79,7 +78,7 @@ public class Game1 : Game
             var c = CharacterBuilder.Build(GraphicsDevice, specs[i]);
             c.Position = new Vector3((i - (specs.Count - 1) * 0.5f) * spacing, 0, 0);
             c.Player.TimeOffset = i * 1.7f;
-            c.Player.Play(Clips.Idle);
+            c.Locomotion = Clips.Idle;
             _characters.Add(c);
         }
         BuildGround();
@@ -99,7 +98,13 @@ public class Game1 : Game
         if (Program.Options.TryGetValue("export", out var exportDir))
             foreach (var c in _characters) c.ExportObj(System.IO.Path.Combine(exportDir, c.Spec.Name + ".obj"));
         float warm = Program.Opt("warm", 0);
-        for (float t = 0; t < warm; t += 1f / 60f) foreach (var c in _characters) c.Player.Update(1f / 60f);
+        if (Program.Flag("drawn")) foreach (var c in _characters) { c.Drawn = true; c.DrawBlend = 1; }
+        float drawAt = Program.Opt("draw", -1);
+        for (float t = 0; t < warm; t += 1f / 60f)
+        {
+            if (drawAt >= 0 && t >= drawAt) { foreach (var c in _characters) c.ToggleWeapon(); drawAt = -1; }
+            foreach (var c in _characters) c.Update(1f / 60f);
+        }
     }
 
     private void FocusOn(int index)
@@ -187,12 +192,12 @@ public class Game1 : Game
         if (Pressed(Keys.F) || Pressed(Keys.Tab))
         {
             int next = (_focus + 2) % (_characters.Count + 1) - 1;
-            _focus = next; _moveVel = Vector3.Zero; _action = null;
+            _focus = next; _moveVel = Vector3.Zero;
             if (_focus < 0) { _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; }
             else { var c = _characters[_focus]; _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0); _camDistGoal = 2.6f; }
         }
         for (int i = 0; i < Clips.All.Count && i < 9; i++)
-            if (Pressed(Keys.D1 + i)) { _clipIndex = i; _varied = false; _action = null; ApplyClips(); }
+            if (Pressed(Keys.D1 + i)) { _clipIndex = i; _varied = false; ApplyClips(); }
         if (keys.IsKeyDown(Keys.L)) _lightYaw += dt * 1.2f;
         if (keys.IsKeyDown(Keys.K)) _lightYaw -= dt * 1.2f;
 
@@ -222,7 +227,7 @@ public class Game1 : Game
         _camTarget = Vector3.Lerp(_camTarget, _camTargetGoal, 1 - MathF.Exp(-dt * 6));
 
         if (_focus >= 0) UpdatePlayer(dt, keys);
-        foreach (var c in _characters) c.Player.Update(dt);
+        foreach (var c in _characters) c.Update(dt);
 
         _prevKeys = keys; _prevMouse = mouse;
         base.Update(gameTime);
@@ -245,10 +250,15 @@ public class Game1 : Game
         bool moving = input.LengthSquared() > 0.01f;
         if (moving) input.Normalize();
 
-        if (Pressed(Keys.Q)) _action = Clips.Attack;
-        if (Pressed(Keys.E)) _action = Clips.Wave;
-        if (Pressed(Keys.X)) _action = Clips.Dance;
-        if (moving) _action = null;
+        if (Pressed(Keys.Q))
+        {
+            if (c.HasWeapon && !c.Drawn && !c.Busy) { c.ToggleWeapon(); c.Queued = Clips.Attack; }
+            else if (!c.Busy || c.Action == Clips.Attack) c.PlayAction(Clips.Attack);
+        }
+        if (Pressed(Keys.E) && !c.Busy) c.PlayAction(Clips.Wave);
+        if (Pressed(Keys.X)) { if (c.Action == Clips.Dance) c.CancelAction(); else if (!c.Busy) c.PlayAction(Clips.Dance); }
+        if (Pressed(Keys.H)) c.ToggleWeapon();
+        if (moving && c.Action != null && c.Action.Name != "Draw") c.CancelAction();
 
         bool run = keys.IsKeyDown(Keys.LeftShift) || keys.IsKeyDown(Keys.RightShift);
         var targetVel = moving ? input * (run ? RunSpeed : WalkSpeed) : Vector3.Zero;
@@ -267,8 +277,7 @@ public class Game1 : Game
         c.Position.Z = MathHelper.Clamp(c.Position.Z, -13f, 13f);
 
         // Clip from state: actions play until cancelled by movement or another action.
-        Clip clip = _action ?? (speed > (WalkSpeed + RunSpeed) * 0.5f ? Clips.Run : speed > 0.2f ? Clips.Walk : Clips.Idle);
-        c.Player.Play(clip);
+        c.Locomotion = speed > (WalkSpeed + RunSpeed) * 0.5f ? Clips.Run : speed > 0.2f ? Clips.Walk : Clips.Idle;
 
         // Camera follows.
         _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0);
@@ -280,7 +289,10 @@ public class Game1 : Game
         for (int i = 0; i < _characters.Count; i++)
         {
             var clip = _varied ? Clips.All[1 + (i + 1) % (Clips.All.Count - 1)] : Clips.All[_clipIndex];
-            _characters[i].Player.Play(clip);
+            var c = _characters[i];
+            c.CancelAction();
+            if (clip.Duration > 0) { c.Locomotion = Clips.Idle; c.PlayAction(clip); if (clip == Clips.Attack) { c.Drawn = true; } }
+            else c.Locomotion = clip;
         }
     }
 
@@ -422,7 +434,7 @@ public class Game1 : Game
         var lines = _focus >= 0
             ? new[]
             {
-                $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   Q attack   E wave   X dance",
+                $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance",
                 "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
                 "1-7 animation   L/K rotate light   G wireframe   R reset   Esc quit"
             }

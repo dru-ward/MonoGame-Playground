@@ -12,6 +12,7 @@ public sealed class Bone
     public Vector3 LocalOffset;       // bind translation relative to parent
     public Vector3 TailOffset;        // local direction/length of the bone (for auto-weighting)
     public Vector3 BindHead, BindTail;
+    public Quaternion BindRotation = Quaternion.Identity;   // constant local rotation (sockets, weapon grips)
     public Matrix InverseBind;
 
     // Animated state (local space)
@@ -60,7 +61,7 @@ public sealed class Skeleton
         for (int i = 0; i < _bones.Count; i++)
         {
             var b = _bones[i];
-            var local = Matrix.CreateFromQuaternion(b.Rotation) * Matrix.CreateTranslation(b.LocalOffset + b.Translation);
+            var local = Matrix.CreateFromQuaternion(b.Rotation) * Matrix.CreateFromQuaternion(b.BindRotation) * Matrix.CreateTranslation(b.LocalOffset + b.Translation);
             b.World = b.Parent >= 0 ? local * _bones[b.Parent].World : local;
             Palette[i] = b.InverseBind * b.World;
         }

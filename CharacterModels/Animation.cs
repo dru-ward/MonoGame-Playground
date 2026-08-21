@@ -47,7 +47,7 @@ public readonly struct PoseWriter
 
     private static float Rad(float deg) => MathHelper.ToRadians(deg);
 
-    /// <summary>Arm/leg style bone. forward = swing toward +Z; outward = abduct away from body; side = +1 left, -1 right.</summary>
+    /// <summary>Arm/leg style bone. forward = swing toward +Z; outward = abduct away from body; side = +1 left, -1 right; twist = about the bone's own axis.</summary>
     public void Hang(string bone, float forward, float outward = 0, float side = 1, float twist = 0)
     {
         if (!_skel.Has(bone)) return;
@@ -62,24 +62,83 @@ public readonly struct PoseWriter
         _pose.Rotations[_skel[bone].Index] = Quaternion.CreateFromYawPitchRoll(Rad(twist), Rad(lean), Rad(-tilt));
     }
 
-    /// <summary>Foot: toeUp = dorsiflex.</summary>
-    public void Foot(string bone, float toeUp, float side = 1, float roll = 0)
+    /// <summary>Foot: toeUp = dorsiflex (relative to shin). toeBend bends the toe bone up (push-off).</summary>
+    public void Foot(string bone, float toeUp, float side = 1, float roll = 0, float toeBend = 0)
     {
         if (!_skel.Has(bone)) return;
         _pose.Rotations[_skel[bone].Index] = Quaternion.CreateFromYawPitchRoll(0, Rad(-toeUp), Rad(roll * side));
+        string toe = bone.Replace("foot", "toe");
+        if (_skel.Has(toe)) _pose.Rotations[_skel[toe].Index] = Quaternion.CreateFromYawPitchRoll(0, Rad(-toeBend), 0);
     }
 
     public void Root(Vector3 offset) => _pose.RootOffset = offset;
+
+    /// <summary>Character-space matrix of a bone under the pose written so far.</summary>
+    public Matrix WorldOf(int index)
+    {
+        var b = _skel[index];
+        var local = Matrix.CreateFromQuaternion(_pose.Rotations[index]) * Matrix.CreateFromQuaternion(b.BindRotation)
+                  * Matrix.CreateTranslation(b.LocalOffset + (index == 0 ? _pose.RootOffset : Vector3.Zero));
+        return b.Parent >= 0 ? local * WorldOf(b.Parent) : local;
+    }
+
+    public Vector3 PositionOf(string bone) => WorldOf(_skel[bone].Index).Translation;
+
+    /// <summary>
+    /// Two-bone analytic IK for an arm: puts the wrist at <paramref name="target"/> (character space) with the elbow
+    /// pushed toward <paramref name="elbowHint"/>. weight blends against whatever FK rotations were already written.
+    /// </summary>
+    public void ArmIK(int side, Vector3 target, Vector3 elbowHint, float weight = 1f)
+    {
+        string L = side > 0 ? "L" : "R";
+        if (!_skel.Has("arm" + L) || weight <= 0) return;
+        var arm = _skel["arm" + L]; var fore = _skel["fore" + L]; var hand = _skel["hand" + L];
+        float l1 = fore.LocalOffset.Length(), l2 = hand.LocalOffset.Length();
+
+        var parentWorld = WorldOf(arm.Parent);
+        var shoulder = Vector3.Transform(arm.LocalOffset, parentWorld);
+        var toTarget = target - shoulder;
+        float d = MathHelper.Clamp(toTarget.Length(), 0.05f, l1 + l2 - 0.005f);
+        var dir = Vector3.Normalize(toTarget);
+
+        float cosA = MathHelper.Clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
+        float a = MathF.Acos(cosA);
+        float cosE = MathHelper.Clamp((l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2), -1, 1);
+        float flex = MathHelper.Pi - MathF.Acos(cosE);          // elbow flexion
+
+        var perp = elbowHint - dir * Vector3.Dot(elbowHint, dir);
+        if (perp.LengthSquared() < 1e-6f) perp = Vector3.Cross(dir, Vector3.Up);
+        perp.Normalize();
+        var u = dir * MathF.Cos(a) + perp * MathF.Sin(a);        // upper-arm direction
+        var elbow = shoulder + u * l1;
+        var f = Vector3.Normalize(target - elbow);               // forearm direction
+
+        // Upper-arm frame: bone axis is -Y, elbow bends toward local +Z (rotation about local +X).
+        var yl = -u;
+        var zl = f - u * Vector3.Dot(f, u);
+        if (zl.LengthSquared() < 1e-6f) zl = perp; else zl.Normalize();
+        var xl = Vector3.Cross(yl, zl);
+        var world = new Matrix(xl.X, xl.Y, xl.Z, 0, yl.X, yl.Y, yl.Z, 0, zl.X, zl.Y, zl.Z, 0, 0, 0, 0, 1);
+        var parentRot = parentWorld; parentRot.Translation = Vector3.Zero;
+        var qArm = Quaternion.CreateFromRotationMatrix(world * Matrix.Invert(parentRot));
+        var qFore = Quaternion.CreateFromAxisAngle(Vector3.Right, -flex);
+
+        int ia = arm.Index, ifo = fore.Index;
+        _pose.Rotations[ia] = weight >= 1 ? qArm : Quaternion.Slerp(_pose.Rotations[ia], qArm, weight);
+        _pose.Rotations[ifo] = weight >= 1 ? qFore : Quaternion.Slerp(_pose.Rotations[ifo], qFore, weight);
+    }
 }
 
 public sealed class Clip
 {
     public string Name;
     public Action<float, PoseWriter> Evaluate;
-    public Clip(string name, Action<float, PoseWriter> evaluate) { Name = name; Evaluate = evaluate; }
+    /// <summary>Seconds for a one-shot clip; 0 = loops forever.</summary>
+    public float Duration;
+    public Clip(string name, Action<float, PoseWriter> evaluate, float duration = 0) { Name = name; Evaluate = evaluate; Duration = duration; }
 }
 
-/// <summary>Cross-fading clip player.</summary>
+/// <summary>Cross-fading clip player with a spring follow-through layer.</summary>
 public sealed class AnimationPlayer
 {
     private readonly Skeleton _skel;
@@ -94,6 +153,8 @@ public sealed class AnimationPlayer
     public float Damping = 0.72f;
     public float TimeOffset;
     public Clip? Current => _current;
+    /// <summary>Time into the current clip (one-shots start at 0).</summary>
+    public float ClipTime => _time + TimeOffset;
 
     public AnimationPlayer(Skeleton skel)
     {
@@ -115,11 +176,12 @@ public sealed class AnimationPlayer
         }
     }
 
-    public void Play(Clip clip)
+    public void Play(Clip clip, bool restart = false)
     {
-        if (_current == clip) return;
+        if (_current == clip && !restart) return;
         _previous = _current; _prevTime = _time;
         _current = clip; _blend = _previous == null ? 1f : 0f;
+        if (restart || clip.Duration > 0) _time = -TimeOffset;     // one-shots always start from zero
     }
 
     public void Update(float dt)
@@ -161,7 +223,6 @@ public sealed class AnimationPlayer
             var x = _smooth.Rotations[i];
             if (Quaternion.Dot(x, target) < 0) target = -target;        // shortest arc
             var v = _vel[i];
-            // Spring on quaternion components (fine for the small per-frame deltas), then renormalise.
             var acc = (target - x) * (w * w) - v * (2 * Damping * w);
             v += acc * dt;
             x += v * dt;
@@ -175,11 +236,20 @@ public sealed class AnimationPlayer
     }
 }
 
+/// <summary>Joint-angle curves over one stride (u = 0 is heel strike of that leg, 0.6 ≈ toe-off).</summary>
+public sealed class Gait
+{
+    public float Hz, Lean, Bob, Sway, Flight, ArmSwing, ElbowBase, ElbowSwing, PelvisYaw, PelvisDrop, ShoulderYaw;
+    public (float, float)[] Hip = null!, Knee = null!, Ankle = null!, Toe = null!;
+    /// <summary>Ground speed this gait was tuned for (m/s) at Height 1.8.</summary>
+    public float Speed;
+}
+
 /// <summary>Library of procedural clips shared by all characters.</summary>
 public static class Clips
 {
     /// <summary>Cyclic Catmull-Rom keyframe curve over u in [0,1): continuous velocity, no stop-start at keys.</summary>
-    private static float Key(float u, params (float t, float v)[] keys)
+    public static float Key(float u, params (float t, float v)[] keys)
     {
         int n = keys.Length - 1;               // last key duplicates the first (t = 1)
         u -= MathF.Floor(u);
@@ -194,9 +264,9 @@ public static class Clips
         return 0.5f * ((2 * p1) + (-p0 + p2) * s + (2 * p0 - 5 * p1 + 4 * p2 - p3) * s2 + (-p0 + 3 * p1 - 3 * p2 + p3) * s3);
     }
 
-    /// <summary>Smooth max(0, x), C1 continuous so joint curves have no kinks.</summary>
+    /// <summary>Smooth max(0, x), C1 continuous so curves have no kinks.</summary>
     private static float Pos(float x, float k = 0.12f) => 0.5f * (x + MathF.Sqrt(x * x + k * k));
-    private static float Smooth01(float x) { x = MathHelper.Clamp(x, 0, 1); return x * x * (3 - 2 * x); }
+    public static float Smooth01(float x) { x = MathHelper.Clamp(x, 0, 1); return x * x * (3 - 2 * x); }
 
     public static readonly Clip BindPose = new("Bind pose", (t, w) => { });
 
@@ -221,56 +291,79 @@ public static class Clips
         }
     });
 
-    public static readonly Clip Walk = new("Walk", (t, w) => Locomotion(t, w, 1.3f, 0.0f, 22f, 45f, 18f, 14f, 0.014f, 0f));
-    public static readonly Clip Run = new("Run", (t, w) => Locomotion(t, w, 2.3f, 12f, 38f, 85f, 42f, 75f, 0.045f, 0.03f));
-
-    private static void Locomotion(float t, PoseWriter w, float hz, float lean, float stride, float kneeSwing,
-                                   float armSwing, float elbow, float bob, float flight)
+    // Joint curves modelled on human gait data (heel strike at 0, loading response, mid-stance, push-off ~0.6, swing).
+    public static readonly Gait WalkGait = new()
     {
-        float phi = t * MathHelper.TwoPi * hz;
-        float s = MathF.Sin(phi), c = MathF.Cos(phi);
+        Hz = 1.25f, Speed = 1.5f, Lean = 2f, Bob = 0.022f, Sway = 0.012f, Flight = 0,
+        ArmSwing = 18f, ElbowBase = 12f, ElbowSwing = 14f, PelvisYaw = 5f, PelvisDrop = 4f, ShoulderYaw = 6f,
+        Hip = new[] { (0f, 24f), (0.12f, 20f), (0.3f, 6f), (0.5f, -11f), (0.62f, -9f), (0.75f, 8f), (0.88f, 21f), (1f, 24f) },
+        Knee = new[] { (0f, 6f), (0.12f, 18f), (0.3f, 8f), (0.45f, 9f), (0.55f, 32f), (0.68f, 62f), (0.8f, 44f), (0.9f, 14f), (1f, 6f) },
+        Ankle = new[] { (0f, 3f), (0.08f, -5f), (0.3f, 5f), (0.45f, 9f), (0.56f, -14f), (0.66f, -8f), (0.82f, 4f), (1f, 3f) },
+        Toe = new[] { (0f, 0f), (0.4f, 6f), (0.52f, 32f), (0.62f, 14f), (0.72f, 0f), (1f, 0f) }
+    };
 
-        w.Root(new Vector3(0.01f * s, bob * MathF.Cos(2 * phi) - bob * 0.5f + flight * Pos(-MathF.Cos(2 * phi), 0.3f), 0));
-        w.Upright("spine", lean * 0.5f, 2f * s, 6f * s);
-        w.Upright("chest", lean * 0.5f, -1f * s, 4f * s);
-        w.Upright("neck", -lean * 0.4f, 0, -3f * s);
-        w.Upright("head", -lean * 0.3f + 1.5f * MathF.Cos(2 * phi), 0, -4f * s);
+    public static readonly Gait RunGait = new()
+    {
+        Hz = 2.2f, Speed = 4.4f, Lean = 11f, Bob = 0.05f, Sway = 0.01f, Flight = 0.035f,
+        ArmSwing = 42f, ElbowBase = 80f, ElbowSwing = 25f, PelvisYaw = 7f, PelvisDrop = 5f, ShoulderYaw = 9f,
+        Hip = new[] { (0f, 34f), (0.15f, 26f), (0.35f, 2f), (0.5f, -17f), (0.6f, -9f), (0.75f, 22f), (0.9f, 34f), (1f, 34f) },
+        Knee = new[] { (0f, 22f), (0.12f, 42f), (0.3f, 24f), (0.45f, 38f), (0.6f, 92f), (0.72f, 108f), (0.85f, 62f), (1f, 22f) },
+        Ankle = new[] { (0f, 0f), (0.1f, -6f), (0.3f, 9f), (0.42f, 13f), (0.52f, -24f), (0.62f, -14f), (0.8f, 2f), (1f, 0f) },
+        Toe = new[] { (0f, 0f), (0.35f, 8f), (0.5f, 38f), (0.6f, 18f), (0.7f, 0f), (1f, 0f) }
+    };
+
+    public static readonly Clip Walk = new("Walk", (t, w) => Locomotion(t, w, WalkGait));
+    public static readonly Clip Run = new("Run", (t, w) => Locomotion(t, w, RunGait));
+
+    private static void Locomotion(float t, PoseWriter w, Gait g)
+    {
+        float u = t * g.Hz;                     // stride phase, left heel strike at 0
+        u -= MathF.Floor(u);
+        float c1 = MathF.Cos(MathHelper.TwoPi * u), s1 = MathF.Sin(MathHelper.TwoPi * u);
+        float c2 = MathF.Cos(2 * MathHelper.TwoPi * u);
+
+        // Root: lowest at double support, highest at mid-stance; sway over the stance foot; flight adds lift.
+        w.Root(new Vector3(g.Sway * s1, -0.5f * g.Bob * c2 + g.Flight * Pos(-c2, 0.3f), 0));
+        // Pelvis and trunk counter-rotation, head kept level.
+        w.Upright("hips", 0, -g.PelvisDrop * s1, -g.PelvisYaw * c1);
+        w.Upright("spine", g.Lean * 0.45f, 1.5f * s1, g.ShoulderYaw * 0.45f * c1 + g.PelvisYaw * 0.5f * c1);
+        w.Upright("chest", g.Lean * 0.45f, -0.5f * s1, g.ShoulderYaw * 0.55f * c1 + g.PelvisYaw * 0.5f * c1);
+        w.Upright("neck", -g.Lean * 0.4f, 0, -g.ShoulderYaw * 0.4f * c1);
+        w.Upright("head", -g.Lean * 0.35f + 0.8f * c2, 0, -g.ShoulderYaw * 0.4f * c1);
 
         for (int side = -1; side <= 1; side += 2)
         {
             string L = side > 0 ? "L" : "R";
-            float p = side > 0 ? phi : phi + MathHelper.Pi;
-            float sp = MathF.Sin(p), cp = MathF.Cos(p);
-
-            float thigh = stride * sp + lean * 0.3f;
-            float swing = Pos(cp, 0.25f);
-            float knee = 6f + kneeSwing * swing * swing / (swing + 0.35f) * 1.35f + 10f * Pos(-cp, 0.25f) * Pos(sp, 0.25f);
-            float toeUp = -(thigh - knee) * 0.75f - 18f * Pos(-sp, 0.3f) * Pos(-cp, 0.3f) + 8f * Pos(sp, 0.3f) * Pos(cp, 0.3f);
-            w.Hang("thigh" + L, thigh, 2f, side);
+            float p = side > 0 ? u : u + 0.5f;
+            float hip = Key(p, g.Hip), knee = Key(p, g.Knee), ankle = Key(p, g.Ankle), toe = Key(p, g.Toe);
+            w.Hang("thigh" + L, hip + g.Lean * 0.3f, 2.5f, side);
             w.Hang("shin" + L, -knee, 0, side);
-            w.Foot("foot" + L, toeUp, side);
+            w.Foot("foot" + L, ankle, side, 0, toe);
 
-            float arm = -armSwing * sp;
-            w.Hang("arm" + L, arm, 6f, side);
-            w.Hang("fore" + L, elbow + 0.4f * armSwing * Pos(-sp, 0.3f), 3f, side);
+            // Arms swing opposite the same-side leg; the elbow bends more on the forward swing.
+            float armF = -(hip - 6f) * g.ArmSwing / 24f;
+            float elbow = g.ElbowBase + g.ElbowSwing * Pos(armF / g.ArmSwing, 0.4f);
+            w.Hang("arm" + L, armF, 6f, side);
+            w.Hang("fore" + L, elbow, 3f, side);
             w.Hang("hand" + L, -4f, 0, side);
-            w.Hang("clav" + L, 0, 1.5f * sp, side);
+            w.Hang("clav" + L, 0, 1.5f * MathF.Sin(MathHelper.TwoPi * p), side);
         }
     }
 
     public static readonly Clip Wave = new("Wave", (t, w) =>
     {
         Idle.Evaluate(t, w);
-        float raise = Smooth01(t * 1.3f);
-        float wave = MathF.Sin(t * 8f) * Smooth01((t - 0.5f) * 1.5f);
-        // Upper arm out to the side (~100 deg) and a little forward; elbow flexes ~85 deg so the hand points up.
-        // The side-to-side wave is a twist about the upper arm's own axis, which swings the bent forearm in a cone.
-        w.Hang("armR", 18f * raise, 100f * raise + 7f, -1, 30f * wave);
-        w.Hang("foreR", 14f - 8f * wave * raise, 85f * raise, -1);
-        w.Hang("handR", 0, 10f * wave * raise, -1);
-        w.Upright("head", 2f, -6f * raise, -12f * raise);
+        float raise = Smooth01(t * 1.4f);
+        float wave = MathF.Sin(t * 7.5f) * Smooth01((t - 0.45f) * 1.6f);
+        // Hand goes up in front of the head and swings left-right; the arm is solved with 2-bone IK.
+        var rest = w.PositionOf("handR");
+        var head = w.PositionOf("head");
+        var target = head + new Vector3(-0.30f + 0.17f * wave, 0.30f, 0.20f);
+        w.ArmIK(-1, Vector3.Lerp(rest, target, raise), new Vector3(-1f, -0.25f, 0.15f), raise);
+        w.Hang("handR", 5f, -(20f + 18f * wave) * raise, -1, 0);
+        w.Upright("head", 2f, -6f * raise, -10f * raise);
         w.Upright("chest", 0, 4f * raise, -6f * raise);
-    });
+    }, 3.2f);
 
     public static readonly Clip Attack = new("Attack", (t, w) =>
     {
@@ -305,8 +398,8 @@ public static class Clips
         w.Foot("footL", 2 * step, 1);
         w.Hang("thighR", -12 - 8 * step, 8, -1);
         w.Hang("shinR", -15 - 6 * step, 0, -1);
-        w.Foot("footR", -5 - 10 * step, -1);
-    });
+        w.Foot("footR", -5 - 10 * step, -1, 0, 20f * Pos(step, 0.3f));
+    }, 1.4f);
 
     public static readonly Clip Dance = new("Dance", (t, w) =>
     {
@@ -331,6 +424,29 @@ public static class Clips
             w.Foot("foot" + L, 8f * lift, side);
         }
     });
+
+    /// <summary>
+    /// One-shot reach to the weapon sockets (draw and sheathe share it; the weapon itself is re-attached by the
+    /// character half-way through). Built per character because the sockets differ by weapon.
+    /// </summary>
+    public static Clip Reach(Skeleton skel, IReadOnlyList<(int side, string socket, Vector3 hint)> reaches, float duration)
+    {
+        return new Clip("Draw", (t, w) =>
+        {
+            Idle.Evaluate(t + 3f, w);
+            float u = MathHelper.Clamp(t / duration, 0, 1);
+            float reach = u < 0.45f ? Smooth01(u / 0.45f) : u < 0.6f ? 1f : 1f - Smooth01((u - 0.6f) / 0.4f);
+            w.Upright("chest", 2f * reach, 0, 0);
+            foreach (var (side, socket, hint) in reaches)
+            {
+                if (!skel.Has(socket)) continue;
+                string L = side > 0 ? "L" : "R";
+                var rest = w.PositionOf("hand" + L);
+                var target = w.PositionOf(socket);
+                w.ArmIK(side, Vector3.Lerp(rest, target, reach), hint, reach);
+            }
+        }, duration);
+    }
 
     public static readonly IReadOnlyList<Clip> All = new[] { BindPose, Idle, Walk, Run, Wave, Attack, Dance };
 }

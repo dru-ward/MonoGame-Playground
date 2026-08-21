@@ -228,7 +228,7 @@ public sealed class MeshBuilder
             for (int s = 0; s < segments; s++)
             {
                 int s1 = (s + 1) % segments;
-                AddQuad(r0 + s, r1 + s, r1 + s1, r0 + s1);
+                AddQuad(r0 + s, r0 + s1, r1 + s1, r1 + s);   // outward-facing winding
             }
         }
         FinishPart(baseIndex, weighter);

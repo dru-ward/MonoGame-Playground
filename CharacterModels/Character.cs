@@ -51,6 +51,90 @@ public sealed class Character
 
     public Matrix World => Matrix.CreateRotationY(Yaw) * Matrix.CreateTranslation(Position);
 
+    // ---- Animation state machine -------------------------------------------------------------
+    /// <summary>Looping clip used when no action is playing (idle/walk/run, or whatever the viewer chose).</summary>
+    public Clip Locomotion = Clips.Idle;
+    public Clip? Action { get; private set; }
+    public Clip? Queued;
+    private float _actionTime;
+    public bool Busy => Action != null;
+
+    /// <summary>Weapon state: 1 = in hand, 0 = in the sheath socket.</summary>
+    public bool Drawn;
+    public float DrawBlend;
+    public bool HasWeapon => Spec.Weapon != Weapon.None;
+    private Clip? _reach;
+    private float _swapAt = -1;
+
+    public void CancelAction() { Action = null; Queued = null; _swapAt = -1; }
+
+    public void PlayAction(Clip clip)
+    {
+        Action = clip; _actionTime = 0;
+        Player.Play(clip, restart: true);
+    }
+
+    /// <summary>Starts the draw or sheathe reach; the weapon swaps sockets at the middle of the reach.</summary>
+    public void ToggleWeapon()
+    {
+        if (!HasWeapon || Busy) return;
+        _reach ??= BuildReach();
+        _swapAt = _reach.Duration * 0.5f;
+        PlayAction(_reach);
+    }
+
+    private Clip BuildReach()
+    {
+        var reaches = new List<(int, string, Vector3)>();
+        if (Skeleton.Has("sheathR")) reaches.Add((-1, "sheathR", Spec.Weapon == Weapon.Daggers ? new Vector3(-1f, 0.2f, 0.6f) : new Vector3(-0.8f, 0.9f, -0.3f)));
+        if (Skeleton.Has("sheathL")) reaches.Add((1, "sheathL", Spec.Weapon == Weapon.Daggers ? new Vector3(1f, 0.2f, 0.6f) : new Vector3(0.8f, 0.9f, -0.3f)));
+        return Clips.Reach(Skeleton, reaches, 0.9f);
+    }
+
+    public void Update(float dt)
+    {
+        if (Action != null)
+        {
+            _actionTime += dt;
+            if (_swapAt >= 0 && _actionTime >= _swapAt) { Drawn = !Drawn; _swapAt = -1; }
+            if (Action.Duration > 0 && _actionTime >= Action.Duration)
+            {
+                Action = null;
+                if (Queued != null) { var q = Queued; Queued = null; PlayAction(q); }
+            }
+        }
+        if (Action == null) Player.Play(Locomotion);
+        Player.Update(dt);
+
+        DrawBlend = MathHelper.Lerp(DrawBlend, Drawn ? 1f : 0f, 1 - MathF.Exp(-dt * 14f));
+        AttachWeapons();
+    }
+
+    /// <summary>Weapon bones follow the hand when drawn and the sheath socket when holstered (blended while swapping).</summary>
+    private void AttachWeapons()
+    {
+        for (int side = -1; side <= 1; side += 2)
+        {
+            string L = side > 0 ? "L" : "R";
+            if (!Skeleton.Has("sheath" + L)) continue;
+            var weapon = Skeleton["weapon" + L];
+            var socket = Skeleton["sheath" + L];
+            var inHand = weapon.World; var inSheath = socket.World;
+            float t = DrawBlend;
+            Matrix world;
+            if (t >= 0.999f) world = inHand;
+            else if (t <= 0.001f) world = inSheath;
+            else
+            {
+                var q = Quaternion.Slerp(Quaternion.CreateFromRotationMatrix(inSheath), Quaternion.CreateFromRotationMatrix(inHand), t);
+                var pos = Vector3.Lerp(inSheath.Translation, inHand.Translation, t);
+                world = Matrix.CreateFromQuaternion(q) * Matrix.CreateTranslation(pos);
+            }
+            weapon.World = world;
+            Skeleton.Palette[weapon.Index] = weapon.InverseBind * world;
+        }
+    }
+
     /// <summary>Writes the bind-pose mesh as a Wavefront OBJ with per-vertex colours (Blender reads the "v x y z r g b" extension).</summary>
     public void ExportObj(string path)
     {
@@ -114,9 +198,42 @@ public static class CharacterBuilder
             sk.Add("hand" + L, "fore" + L, new Vector3(0, -0.27f * s, 0), new Vector3(0, -0.17f * s, 0));
             sk.Add("thigh" + L, "hips", new Vector3(side * hw, -0.03f * s, 0), new Vector3(0, -0.44f * s, 0));
             sk.Add("shin" + L, "thigh" + L, new Vector3(0, -0.44f * s, 0), new Vector3(0, -0.42f * s, 0));
-            sk.Add("foot" + L, "shin" + L, new Vector3(0, -0.42f * s, 0), new Vector3(0, -0.04f * s, 0.16f * s));
+            sk.Add("foot" + L, "shin" + L, new Vector3(0, -0.42f * s, 0), new Vector3(0, -0.035f * s, 0.11f * s));
+            sk.Add("toe" + L, "foot" + L, new Vector3(0, -0.035f * s, 0.11f * s), new Vector3(0, 0, 0.07f * s));
+
+            // Weapon bone sits at the hand; its BindRotation turns the hanging bind-pose weapon into a natural grip
+            // (blade forward-down across the fist for swords/axes/daggers, vertical for staff and bow).
+            bool grip = spec.Weapon is Weapon.Sword or Weapon.Axe or Weapon.Daggers;
+            var wb = sk.Add("weapon" + L, "hand" + L, Vector3.Zero, new Vector3(0, -0.3f * s, 0));
+            wb.BindRotation = grip ? Quaternion.CreateFromAxisAngle(Vector3.Right, MathHelper.ToRadians(-58f)) : Quaternion.Identity;
+        }
+
+        // Sheath sockets: where the weapon bone goes when holstered (chest for back carry, hips for daggers).
+        switch (spec.Weapon)
+        {
+            case Weapon.Sword:
+            case Weapon.Axe:
+                Socket(sk, "sheathR", "chest", new Vector3(-0.08f, -0.02f, -0.19f) * s, 180f, -22f);
+                break;
+            case Weapon.Staff:
+                Socket(sk, "sheathR", "chest", new Vector3(-0.10f, -0.30f, -0.20f) * s, 0f, -32f);
+                break;
+            case Weapon.Bow:
+                Socket(sk, "sheathL", "chest", new Vector3(0.04f, -0.10f, -0.21f) * s, 0f, 28f);
+                break;
+            case Weapon.Daggers:
+                Socket(sk, "sheathR", "hips", new Vector3(-0.20f, 0.03f, 0.03f) * s, 0f, -12f);
+                Socket(sk, "sheathL", "hips", new Vector3(0.20f, 0.03f, 0.03f) * s, 0f, 12f);
+                break;
         }
         return sk;
+    }
+
+    private static void Socket(Skeleton sk, string name, string parent, Vector3 offset, float flipDeg, float tiltDeg)
+    {
+        var b = sk.Add(name, parent, offset, new Vector3(0, 0.1f, 0));
+        b.BindRotation = Quaternion.CreateFromAxisAngle(Vector3.Right, MathHelper.ToRadians(flipDeg))
+                       * Quaternion.CreateFromAxisAngle(Vector3.Backward, MathHelper.ToRadians(tiltDeg));
     }
 
     // ------------------------------------------------------------------- body
@@ -238,13 +355,14 @@ public static class CharacterBuilder
             }, Seg, new Weighter(sk, 4, "shin" + L, "foot" + L), Vector3.Backward, capStart: true, capEnd: true, capSteps: 2);
 
             // Foot
-            var footW = new Weighter(sk, 4, "shin" + L, "foot" + L);
+            var footW = new Weighter(sk, 5, "shin" + L, "foot" + L, "toe" + L);
             mb.Loft(new[]
             {
                 new Ring(new Vector3(lx, 0.05f * s, -0.05f * s), 0.046f * s * b, 0.042f * s * b, spec.Boots, Mat.Leather),
                 new Ring(new Vector3(lx, 0.045f * s, 0.02f * s), 0.052f * s * b, 0.045f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.038f * s, 0.10f * s), 0.05f * s * b, 0.038f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.032f * s, 0.16f * s), 0.042f * s * b, 0.03f * s * b, spec.Boots, Mat.Leather)
+                new Ring(new Vector3(lx, 0.040f * s, 0.08f * s), 0.051f * s * b, 0.040f * s * b, spec.Boots, Mat.Leather),
+                new Ring(new Vector3(lx, 0.036f * s, 0.12f * s), 0.048f * s * b, 0.035f * s * b, spec.Boots, Mat.Leather),
+                new Ring(new Vector3(lx, 0.032f * s, 0.17f * s), 0.040f * s * b, 0.028f * s * b, spec.Boots, Mat.Leather)
             }, 16, footW, Vector3.Up, capStart: true, capEnd: true);
 
             // Pauldron
@@ -443,7 +561,7 @@ public static class CharacterBuilder
         float sw = 0.21f * s * spec.Shoulders;
         string L = side > 0 ? "L" : "R";
         float x = side * sw;
-        var handW = Weighter.Fixed(sk, "hand" + L);
+        var handW = Weighter.Fixed(sk, "weapon" + L);
         var foreW = Weighter.Fixed(sk, "fore" + L);
         Vector3 V(float dx, float y, float z) => new Vector3(x + dx * s, y * s, z * s);
         var steel = spec.Metal; var wood = new Color(110, 80, 50); var dark = new Color(40, 35, 35);
