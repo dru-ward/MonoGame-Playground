@@ -1,0 +1,394 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
+
+namespace CharacterModels;
+
+public class Game1 : Game
+{
+    private readonly GraphicsDeviceManager _graphics;
+    private SpriteBatch _spriteBatch = null!;
+    private SpriteFont _font = null!;
+    private Effect _effect = null!;
+    private Texture2D _grain = null!;
+    private RenderTarget2D _shadowMap = null!;
+    private const int ShadowSize = 2048;
+
+    private readonly List<Character> _characters = new();
+    private VertexBuffer _groundVb = null!;
+    private IndexBuffer _groundIb = null!;
+    private readonly Matrix[] _identityPalette = { Matrix.Identity };
+
+    // Camera
+    private float _camYaw = 0.0f, _camPitch = MathHelper.ToRadians(10), _camDist = 6.0f;
+    private Vector3 _camTarget = new(0, 0.95f, 0);
+    private Vector3 _camTargetGoal = new(0, 0.95f, 0);
+    private float _camDistGoal = 6.0f;
+    private bool _autoOrbit = true;
+    private int _focus = -1;
+
+    // Lighting
+    private float _lightYaw = MathHelper.ToRadians(35);
+    private bool _wireframe;
+    private bool _varied;
+    private int _clipIndex = 1;
+
+    private RenderTarget2D? _shotTarget;
+    private int _frame;
+    private KeyboardState _prevKeys;
+    private MouseState _prevMouse;
+    private float _time;
+    private readonly Vector3 _fogColorLinear = new(0.045f, 0.05f, 0.07f);
+
+    public Game1()
+    {
+        _graphics = new GraphicsDeviceManager(this)
+        {
+            PreferredBackBufferWidth = 1600,
+            PreferredBackBufferHeight = 900,
+            GraphicsProfile = GraphicsProfile.HiDef,
+            PreferMultiSampling = true,
+            SynchronizeWithVerticalRetrace = true
+        };
+        _graphics.PreparingDeviceSettings += (_, e) => e.GraphicsDeviceInformation.PresentationParameters.MultiSampleCount = 8;
+        Content.RootDirectory = "Content";
+        IsMouseVisible = true;
+        Window.Title = "MonoGame Procedural Character Models";
+        Window.AllowUserResizing = true;
+    }
+
+    protected override void LoadContent()
+    {
+        _spriteBatch = new SpriteBatch(GraphicsDevice);
+        _font = Content.Load<SpriteFont>("Font");
+        _effect = Content.Load<Effect>("Character");
+        _grain = BuildGrainTexture(256);
+        _shadowMap = new RenderTarget2D(GraphicsDevice, ShadowSize, ShadowSize, false, SurfaceFormat.Single, DepthFormat.Depth24, 0, RenderTargetUsage.DiscardContents);
+
+        var specs = Roster.Create();
+        float spacing = 1.25f;
+        for (int i = 0; i < specs.Count; i++)
+        {
+            var c = CharacterBuilder.Build(GraphicsDevice, specs[i]);
+            c.Position = new Vector3((i - (specs.Count - 1) * 0.5f) * spacing, 0, 0);
+            c.Player.TimeOffset = i * 1.7f;
+            c.Player.Play(Clips.Idle);
+            _characters.Add(c);
+        }
+        BuildGround();
+
+        // Startup options (for scripted screenshots / demos).
+        _camYaw = MathHelper.ToRadians(Program.Opt("yaw", 0));
+        _camPitch = MathHelper.ToRadians(Program.Opt("pitch", 10));
+        _camDist = _camDistGoal = Program.Opt("dist", 6);
+        _lightYaw = MathHelper.ToRadians(Program.Opt("light", 35));
+        if (Program.Flag("no-orbit")) _autoOrbit = false;
+        int focus = (int)Program.Opt("focus", -1);
+        if (focus >= 0 && focus < _characters.Count) FocusOn(focus);
+        int clip = (int)Program.Opt("clip", 1);
+        if (clip >= 0 && clip < Clips.All.Count) _clipIndex = clip;
+        _varied = Program.Flag("varied");
+        ApplyClips();
+        if (Program.Options.TryGetValue("export", out var exportDir))
+            foreach (var c in _characters) c.ExportObj(System.IO.Path.Combine(exportDir, c.Spec.Name + ".obj"));
+        float warm = Program.Opt("warm", 0);
+        for (float t = 0; t < warm; t += 1f / 60f) foreach (var c in _characters) c.Player.Update(1f / 60f);
+    }
+
+    private void FocusOn(int index)
+    {
+        _focus = index;
+        if (_focus < 0) { _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; }
+        else { var c = _characters[_focus]; _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * Program.Opt("ty", 0.55f), 0); _camDistGoal = Program.Opt("dist", 2.6f); }
+        _camTarget = _camTargetGoal; _camDist = _camDistGoal;
+    }
+
+    private Texture2D BuildGrainTexture(int size)
+    {
+        var tex = new Texture2D(GraphicsDevice, size, size, true, SurfaceFormat.Color);
+        var rnd = new Random(1234);
+        // Value noise with a few octaves, tileable via modulo lattice.
+        float[] Lattice(int n)
+        {
+            var l = new float[n * n];
+            for (int i = 0; i < l.Length; i++) l[i] = (float)rnd.NextDouble();
+            return l;
+        }
+        var oct = new[] { (Lattice(8), 8, 0.5f), (Lattice(16), 16, 0.3f), (Lattice(32), 32, 0.2f) };
+        var data = new Color[size * size];
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            float v = 0;
+            foreach (var (l, n, amp) in oct)
+            {
+                float fx = x / (float)size * n, fy = y / (float)size * n;
+                int x0 = (int)fx, y0 = (int)fy; float tx = fx - x0, ty = fy - y0;
+                tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+                float a = l[(y0 % n) * n + x0 % n], b = l[(y0 % n) * n + (x0 + 1) % n];
+                float c = l[((y0 + 1) % n) * n + x0 % n], d = l[((y0 + 1) % n) * n + (x0 + 1) % n];
+                v += MathHelper.Lerp(MathHelper.Lerp(a, b, tx), MathHelper.Lerp(c, d, tx), ty) * amp;
+            }
+            v += (float)(rnd.NextDouble() - 0.5) * 0.15f;
+            byte g = (byte)MathHelper.Clamp(v * 255f, 0, 255);
+            data[y * size + x] = new Color(g, g, g, (byte)255);
+        }
+        tex.SetData(0, null, data, 0, data.Length);
+        return tex;
+    }
+
+    private void BuildGround()
+    {
+        var sk = new Skeleton();
+        sk.Add("root", null, Vector3.Zero, Vector3.Up);
+        var w = Weighter.Fixed(sk, "root");
+        var mb = new MeshBuilder();
+        const int half = 14;
+        var a = new Color(64, 62, 68); var b = new Color(54, 52, 58);
+        for (int z = -half; z < half; z++)
+        for (int x = -half; x < half; x++)
+            mb.Box(new Vector3(x + 0.5f, -0.02f, z + 0.5f), new Vector3(0.985f, 0.04f, 0.985f), ((x + z) & 1) == 0 ? a : b, new Vector2(0.25f, 0.3f), w);
+        foreach (var c in _characters)
+        {
+            var col = new Color(88, 86, 94);
+            mb.Loft(new[]
+            {
+                new Ring(c.Position + new Vector3(0, 0.0f, 0), 0.5f, col, new Vector2(0.4f, 0.4f)) { Tangent = Vector3.Up },
+                new Ring(c.Position + new Vector3(0, 0.025f, 0), 0.5f, col, new Vector2(0.4f, 0.4f)) { Tangent = Vector3.Up },
+                new Ring(c.Position + new Vector3(0, 0.03f, 0), 0.47f, col, new Vector2(0.4f, 0.4f)) { Tangent = Vector3.Up },
+                new Ring(c.Position + new Vector3(0, 0.03f, 0), 0.0f, col, new Vector2(0.4f, 0.4f)) { Tangent = Vector3.Up }
+            }, 40, w, Vector3.Backward);
+        }
+        (_groundVb, _groundIb) = mb.Upload(GraphicsDevice);
+    }
+
+    // ------------------------------------------------------------------ update
+
+    protected override void Update(GameTime gameTime)
+    {
+        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        _time += dt;
+        var keys = Keyboard.GetState();
+        var mouse = Mouse.GetState();
+        bool Pressed(Keys k) => keys.IsKeyDown(k) && !_prevKeys.IsKeyDown(k);
+
+        if (keys.IsKeyDown(Keys.Escape)) Exit();
+        if (Pressed(Keys.Space)) _autoOrbit = !_autoOrbit;
+        if (Pressed(Keys.W)) _wireframe = !_wireframe;
+        if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
+        if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
+        if (Pressed(Keys.F) || Pressed(Keys.Tab))
+        {
+            int next = (_focus + 2) % (_characters.Count + 1) - 1;
+            _focus = next;
+            if (_focus < 0) { _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; }
+            else { var c = _characters[_focus]; _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0); _camDistGoal = 2.6f; }
+        }
+        for (int i = 0; i < Clips.All.Count && i < 9; i++)
+            if (Pressed(Keys.D1 + i)) { _clipIndex = i; _varied = false; ApplyClips(); }
+        if (keys.IsKeyDown(Keys.L)) _lightYaw += dt * 1.2f;
+        if (keys.IsKeyDown(Keys.K)) _lightYaw -= dt * 1.2f;
+
+        // Camera control
+        float orbitSpeed = 1.5f * dt;
+        if (keys.IsKeyDown(Keys.Left)) _camYaw -= orbitSpeed;
+        if (keys.IsKeyDown(Keys.Right)) _camYaw += orbitSpeed;
+        if (keys.IsKeyDown(Keys.Up)) _camPitch += orbitSpeed * 0.6f;
+        if (keys.IsKeyDown(Keys.Down)) _camPitch -= orbitSpeed * 0.6f;
+        if (IsActive && mouse.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Pressed)
+        {
+            _camYaw += (mouse.X - _prevMouse.X) * 0.006f;
+            _camPitch += (mouse.Y - _prevMouse.Y) * 0.004f;
+            _autoOrbit = false;
+        }
+        if (IsActive && mouse.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Pressed)
+        {
+            var view = Matrix.CreateRotationY(-_camYaw);
+            var right = Vector3.TransformNormal(Vector3.Right, Matrix.Invert(view));
+            _camTargetGoal += (-right * (mouse.X - _prevMouse.X) + Vector3.Up * (mouse.Y - _prevMouse.Y)) * 0.0025f * _camDist;
+        }
+        int wheel = mouse.ScrollWheelValue - _prevMouse.ScrollWheelValue;
+        if (wheel != 0) _camDistGoal = MathHelper.Clamp(_camDistGoal * MathF.Pow(0.9f, wheel / 120f), 1.2f, 15f);
+        if (_autoOrbit) _camYaw += dt * 0.25f;
+        _camPitch = MathHelper.Clamp(_camPitch, MathHelper.ToRadians(-15), MathHelper.ToRadians(80));
+        _camDist = MathHelper.Lerp(_camDist, _camDistGoal, 1 - MathF.Exp(-dt * 6));
+        _camTarget = Vector3.Lerp(_camTarget, _camTargetGoal, 1 - MathF.Exp(-dt * 6));
+
+        foreach (var c in _characters) c.Player.Update(dt);
+
+        _prevKeys = keys; _prevMouse = mouse;
+        base.Update(gameTime);
+    }
+
+    private void ApplyClips()
+    {
+        for (int i = 0; i < _characters.Count; i++)
+        {
+            var clip = _varied ? Clips.All[1 + (i + 1) % (Clips.All.Count - 1)] : Clips.All[_clipIndex];
+            _characters[i].Player.Play(clip);
+        }
+    }
+
+    // -------------------------------------------------------------------- draw
+
+    private static Vector3 ToneMap(Vector3 c)
+    {
+        c = new Vector3(1 - MathF.Exp(-c.X * 1.5f), 1 - MathF.Exp(-c.Y * 1.5f), 1 - MathF.Exp(-c.Z * 1.5f));
+        return new Vector3(MathF.Pow(c.X, 1 / 2.2f), MathF.Pow(c.Y, 1 / 2.2f), MathF.Pow(c.Z, 1 / 2.2f));
+    }
+
+    protected override void Draw(GameTime gameTime)
+    {
+        var gd = GraphicsDevice;
+        var pp = gd.PresentationParameters;
+        float aspect = pp.BackBufferWidth / (float)pp.BackBufferHeight;
+
+        // Camera matrices
+        var camOffset = Vector3.Transform(new Vector3(0, 0, _camDist), Matrix.CreateRotationX(-_camPitch) * Matrix.CreateRotationY(_camYaw));
+        var camPos = _camTarget + camOffset;
+        var view = Matrix.CreateLookAt(camPos, _camTarget, Vector3.Up);
+        var proj = Matrix.CreatePerspectiveFieldOfView(MathHelper.ToRadians(38), aspect, 0.1f, 80f);
+
+        // Light
+        var lightDir = Vector3.Normalize(Vector3.Transform(new Vector3(0, -0.85f, -0.6f), Matrix.CreateRotationY(_lightYaw)));
+        var sceneCenter = new Vector3(0, 0.9f, 0);
+        var lightView = Matrix.CreateLookAt(sceneCenter - lightDir * 12f, sceneCenter, Vector3.Up);
+        var lightProj = Matrix.CreateOrthographic(8.5f, 8.5f, 1f, 24f);
+        var lightVp = lightView * lightProj;
+
+        // ---- Shadow pass
+        gd.SetRenderTarget(_shadowMap);
+        gd.Clear(ClearOptions.Target | ClearOptions.DepthBuffer, Color.White, 1f, 0);
+        gd.DepthStencilState = DepthStencilState.Default;
+        gd.RasterizerState = RasterizerState.CullNone;
+        gd.BlendState = BlendState.Opaque;
+        _effect.CurrentTechnique = _effect.Techniques["ShadowCaster"];
+        _effect.Parameters["LightViewProjection"].SetValue(lightVp);
+        DrawScene(shadowPass: true);
+
+        // ---- Main pass
+        string? shot = Program.Options.TryGetValue("shot", out var sp) ? sp : null;
+        if (shot != null && _shotTarget == null)
+            _shotTarget = new RenderTarget2D(gd, pp.BackBufferWidth, pp.BackBufferHeight, false, SurfaceFormat.Color, DepthFormat.Depth24, 8, RenderTargetUsage.DiscardContents);
+        gd.SetRenderTarget(_shotTarget);
+        var fogTm = ToneMap(_fogColorLinear);
+        gd.Clear(new Color(fogTm));
+        gd.DepthStencilState = DepthStencilState.Default;
+        gd.RasterizerState = _wireframe ? new RasterizerState { FillMode = FillMode.WireFrame, CullMode = CullMode.None } : RasterizerState.CullCounterClockwise;
+        gd.SamplerStates[0] = SamplerState.PointClamp;
+        gd.SamplerStates[1] = SamplerState.LinearWrap;
+
+        _effect.CurrentTechnique = _effect.Techniques["Skinned"];
+        var p = _effect.Parameters;
+        p["View"].SetValue(view);
+        p["Projection"].SetValue(proj);
+        p["LightViewProjection"].SetValue(lightVp);
+        p["LightDirection"].SetValue(lightDir);
+        p["LightColor"].SetValue(new Vector3(1.05f, 0.98f, 0.88f) * 1.7f);
+        p["FillDirection"].SetValue(Vector3.Normalize(new Vector3(0.8f, -0.15f, 0.35f)));
+        p["FillColor"].SetValue(new Vector3(0.16f, 0.18f, 0.24f));
+        p["SkyColor"].SetValue(new Vector3(0.20f, 0.22f, 0.28f));
+        p["GroundColor"].SetValue(new Vector3(0.10f, 0.085f, 0.07f));
+        p["CameraPosition"].SetValue(camPos);
+        p["RimColor"].SetValue(new Vector3(0.28f, 0.32f, 0.42f));
+        p["ShadowMap"].SetValue(_shadowMap);
+        p["ShadowMapSize"].SetValue((float)ShadowSize);
+        p["ShadowStrength"].SetValue(0.9f);
+        p["GrainTexture"].SetValue(_grain);
+        p["GrainStrength"].SetValue(0.35f);
+        p["FogStart"].SetValue(10f);
+        p["FogEnd"].SetValue(34f);
+        p["FogColor"].SetValue(_fogColorLinear);
+        DrawScene(shadowPass: false);
+
+        DrawHud(view, proj);
+        if (_shotTarget != null)
+        {
+            gd.SetRenderTarget(null);
+            if (++_frame >= 3)
+            {
+                using var fs = System.IO.File.Create(shot!);
+                _shotTarget.SaveAsPng(fs, _shotTarget.Width, _shotTarget.Height);
+                Exit();
+            }
+        }
+        base.Draw(gameTime);
+    }
+
+    private void DrawScene(bool shadowPass)
+    {
+        var gd = GraphicsDevice;
+        var p = _effect.Parameters;
+
+        p["World"].SetValue(Matrix.Identity);
+        p["Bones"].SetValue(_identityPalette);
+        gd.SetVertexBuffer(_groundVb);
+        gd.Indices = _groundIb;
+        foreach (var pass in _effect.CurrentTechnique.Passes)
+        {
+            pass.Apply();
+            gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, _groundIb.IndexCount / 3);
+        }
+
+        foreach (var c in _characters)
+        {
+            p["World"].SetValue(c.World);
+            p["Bones"].SetValue(c.Skeleton.Palette);
+            gd.SetVertexBuffer(c.VertexBuffer);
+            gd.Indices = c.IndexBuffer;
+            foreach (var pass in _effect.CurrentTechnique.Passes)
+            {
+                pass.Apply();
+                gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, c.IndexBuffer.IndexCount / 3);
+            }
+        }
+    }
+
+    private void DrawHud(Matrix view, Matrix proj)
+    {
+        var gd = GraphicsDevice;
+        _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
+
+        int tris = 0, verts = 0;
+        foreach (var c in _characters) { tris += c.Triangles; verts += c.Vertices; }
+
+        void Text(string s, Vector2 pos, Color col, float scale = 1f)
+        {
+            _spriteBatch.DrawString(_font, s, pos + new Vector2(1, 1), Color.Black * 0.7f, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
+            _spriteBatch.DrawString(_font, s, pos, col, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
+        }
+
+        Text("MonoGame Procedural Characters", new Vector2(16, 12), Color.White, 1.3f);
+        Text($"{_characters.Count} characters  |  {tris:N0} triangles  {verts:N0} vertices  |  {_characters[0].Skeleton.Count} bones each  |  GPU skinning + PCF shadows",
+            new Vector2(16, 40), new Color(200, 205, 215));
+        string clipName = _varied ? "varied" : Clips.All[_clipIndex].Name;
+        Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}", new Vector2(16, 62), new Color(255, 220, 150));
+
+        var lines = new[]
+        {
+            "1-7  animation (bind, idle, walk, run, wave, attack, dance)",
+            "V    varied animations     F / Tab  focus next character",
+            "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
+            "Space auto-orbit   L/K rotate light   W wireframe   R reset   Esc quit"
+        };
+        float y = gd.Viewport.Height - 16 - lines.Length * 20;
+        foreach (var l in lines) { Text(l, new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }
+
+        // Name labels over heads
+        foreach (var c in _characters)
+        {
+            var worldPos = c.Position + new Vector3(0, c.Spec.Height + 0.28f, 0);
+            var sp = gd.Viewport.Project(worldPos, proj, view, Matrix.Identity);
+            if (sp.Z < 0 || sp.Z > 1) continue;
+            var size = _font.MeasureString(c.Spec.Name) * 0.95f;
+            Text(c.Spec.Name, new Vector2(sp.X - size.X / 2, sp.Y - size.Y), Color.White, 0.95f);
+        }
+        _spriteBatch.End();
+
+        // SpriteBatch clobbers these; restore for next frame's 3D pass.
+        gd.DepthStencilState = DepthStencilState.Default;
+        gd.BlendState = BlendState.Opaque;
+    }
+}
