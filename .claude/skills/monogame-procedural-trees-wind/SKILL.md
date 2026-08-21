@@ -107,6 +107,30 @@ rare, random yaw and scale 0.85–1.25. Paint the ground outside the plaza as gr
 jitter, slightly uneven slab heights) and a kerb ring — trees on a checkerboard look wrong.
 Provide `--trees n`, `--seed n`, `--wind s` and a `--gallery` flag (one of each style in a row) for inspection shots.
 
+## Collision
+Give each tree a `Radius` (trunk base, 0.15 birch … 0.28 dead, × scale). The controlled character is a circle
+(r 0.28); after integrating velocity run two passes of circle push-out against trees, lamp posts and other
+characters, and remove the velocity component pointing into the obstacle so the character slides along it.
+A headless `--walk` option (run at the nearest tree during warm-up, print the final distance) verifies it
+without a human at the keyboard: expected distance = trunk radius + body radius.
+
+## Rain and falling leaves (CPU particles, BasicEffect, after the lit scene)
+* Rain: ≤ 2600 drops in a 28 m box that follows the camera target, vel −8.5…−11 m/s + wind drift, recycled
+  to the top when they hit y = 0 (35 % spawn a 0.28 s expanding ring splash). Draw each as a quad stretched
+  along `vel × 0.045 s`, 8 mm wide, perpendicular to the view direction, alpha 0.42 faded to zero at 30 m and
+  near the camera, tinted 70 % toward the *display-space* fog colour so it never reads as white paint.
+* Leaves: shed from broadleaf crowns (`tree.CrownHeight`, palette colours) at a rate ∝ wind × tree count;
+  terminal velocity ~0.9 m/s with sinusoidal flutter, drift = wind × (0.9 + 1.2 gust), tumble with
+  `CreateFromYawPitchRoll(a, 0.7a, 1.3a)`, then lie flat on the ground and skitter if wind > 0.9, fade in the last 1.2 s.
+* Double-sided quads (`CullNone`) for leaves; `NonPremultiplied` blend; `DepthStencilState.DepthRead` in the
+  forward path. In the deferred path the composite quad left no scene depth in the output target, so draw with
+  depth test off — acceptable for sparse rain/leaves; for heavy weather write rain into the G-buffer instead.
+
+## Fog / "misty" default
+Fog at `start 10, end 34` with a dark fog colour made a 13 m-radius forest look misty; `start 24, end 75` keeps
+the background tint but shows every tree. The deferred "dusk" balance (key × 0.55, sky 0.10) was likewise too
+dim once there was scenery to see — key × 1.0 with sky 0.17 still lets the point lights read.
+
 ## Gotchas
 * **Shadow frustum**: the directional shadow was an 8.5 m ortho box around the characters; trees outside
   it cast no shadow and their sway vanished from shadows. Widen to ~20 m and move the light eye back

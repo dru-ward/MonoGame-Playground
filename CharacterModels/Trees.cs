@@ -37,6 +37,9 @@ public sealed class Tree
     public VertexBuffer VertexBuffer = null!;
     public IndexBuffer IndexBuffer = null!;
     public int Triangles, Vertices;
+    public float Radius = 0.25f;        // trunk collision radius (m)
+    public float CrownHeight = 2.5f;     // where leaves are shed from
+    public Color[] LeafColors = Array.Empty<Color>();
     public Matrix World => Matrix.CreateRotationY(Yaw) * Matrix.CreateTranslation(Position);
 
     /// <summary>Per-bone sway parameters: how flexible the bone is and which chain depth it sits at.</summary>
@@ -95,6 +98,10 @@ public static class TreeBuilder
 
         sk.Update();
         tree.Skeleton = sk;
+        tree.Radius = style switch { TreeStyle.Birch => 0.15f, TreeStyle.Pine => 0.2f, TreeStyle.Palm => 0.2f, TreeStyle.Dead => 0.28f, _ => 0.26f } * scale;
+        tree.LeafColors = style switch { TreeStyle.Oak => OakPalette.Leaves, TreeStyle.Maple => MaplePalette.Leaves, TreeStyle.Birch => BirchPalette.Leaves, _ => Array.Empty<Color>() };
+        float topY = 0; foreach (var b in sk.Bones) topY = MathF.Max(topY, b.BindTail.Y);
+        tree.CrownHeight = topY * 0.8f;
         (tree.VertexBuffer, tree.IndexBuffer) = mb.Upload(gd);
         tree.Triangles = mb.TriangleCount; tree.Vertices = mb.VertexCount;
         return tree;

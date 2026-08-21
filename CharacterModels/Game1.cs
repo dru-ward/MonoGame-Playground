@@ -29,6 +29,8 @@ public class Game1 : Game
     private readonly List<Character> _characters = new();
     private readonly List<Tree> _trees = new();
     private readonly Wind _wind = new();
+    private Weather _weather = null!;
+    private readonly List<(Vector3 pos, float height, Color[] colors)> _leafSources = new();
     private static readonly float[] WindPresets = { 0f, 0.35f, 0.7f, 1.3f };
     private int _windPreset = 2;
     private VertexBuffer _groundVb = null!;
@@ -102,6 +104,8 @@ public class Game1 : Game
         BuildGround();
         PlantTrees((int)Program.Opt("trees", 22), (int)Program.Opt("seed", 7));
         _wind.Strength = Program.Opt("wind", WindPresets[_windPreset]);
+        _weather = new Weather(GraphicsDevice) { Raining = Program.Flag("rain"), RainDensity = Program.Opt("rain", 1f) };
+        foreach (var t in _trees) if (t.LeafColors.Length > 0) _leafSources.Add((t.Position, t.CrownHeight, t.LeafColors));
 
         // The mage's orb is a light: follow the staff tip through the weapon bone (works sheathed or drawn).
         foreach (var c in _characters)
@@ -140,8 +144,24 @@ public class Game1 : Game
             if (drawAt >= 0 && t >= drawAt) { foreach (var c in _characters) c.ToggleWeapon(); drawAt = -1; }
             foreach (var c in _characters) c.Update(1f / 60f);
             _time += 1f / 60f;
+            if (_focus >= 0 && Program.Flag("walk") && _trees.Count > 0)
+            {
+                // Headless collision test: run the focused character straight at the nearest tree.
+                var pc = _characters[_focus];
+                Tree? nearest = null; float best = float.MaxValue;
+                foreach (var tr in _trees) { float d = Vector3.DistanceSquared(tr.Position, pc.Position); if (d < best) { best = d; nearest = tr; } }
+                var dir = Vector3.Normalize(nearest!.Position - pc.Position);
+                _moveVel = dir * RunSpeed;
+                pc.Position += _moveVel / 60f;
+                ResolveCollisions(pc);
+                pc.Yaw = MathF.Atan2(dir.X, dir.Z);
+                _camTarget = _camTargetGoal = pc.Position + new Vector3(0, pc.Spec.Height * 0.55f, 0);
+                if (t + 1f / 60f >= warm)
+                    Console.Error.WriteLine($"walk test: distance to tree {MathF.Sqrt(Vector3.DistanceSquared(nearest.Position, pc.Position)):0.000} (trunk r {nearest.Radius:0.000} + 0.28)");
+            }
         }
         foreach (var t in _trees) t.Update(_time, _wind);
+        for (float t = 0; t < MathF.Min(warm, 4f); t += 1f / 30f) _weather.Update(1f / 30f, _camTarget, _wind, _leafSources);
     }
 
     /// <summary>Plants a ring of mixed-style trees around the plaza with a minimum spacing; --trees 0 disables.</summary>
@@ -286,6 +306,7 @@ public class Game1 : Game
         if (Pressed(Keys.Space)) _autoOrbit = !_autoOrbit;
         if (Pressed(Keys.G)) _wireframe = !_wireframe;
         if (Pressed(Keys.B)) _useDeferred = !_useDeferred;
+        if (Pressed(Keys.N)) _weather.Raining = !_weather.Raining;
         if (Pressed(Keys.T)) { _windPreset = (_windPreset + 1) % WindPresets.Length; _wind.Strength = WindPresets[_windPreset]; }
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
         if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
@@ -329,6 +350,7 @@ public class Game1 : Game
         if (_focus >= 0) UpdatePlayer(dt, keys);
         foreach (var c in _characters) c.Update(dt);
         foreach (var t in _trees) t.Update(_time, _wind);
+        _weather.Update(dt, _camTarget, _wind, _leafSources);
 
         _prevKeys = keys; _prevMouse = mouse;
         base.Update(gameTime);
@@ -374,6 +396,7 @@ public class Game1 : Game
             c.Yaw += delta * (1 - MathF.Exp(-dt * 12f));
         }
         c.Position += _moveVel * dt;
+        ResolveCollisions(c);
         c.Position.X = MathHelper.Clamp(c.Position.X, -13f, 13f);
         c.Position.Z = MathHelper.Clamp(c.Position.Z, -13f, 13f);
 
@@ -383,6 +406,33 @@ public class Game1 : Game
         // Camera follows.
         _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0);
         _autoOrbit = false;
+    }
+
+    /// <summary>Circle-vs-circle push-out against tree trunks, lamp posts and the other characters (two passes so corners settle).</summary>
+    private void ResolveCollisions(Character c)
+    {
+        const float selfR = 0.28f;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            foreach (var t in _trees) PushOut(ref c.Position, t.Position, selfR + t.Radius);
+            foreach (var (pos, _, _, _, _) in Lamps) PushOut(ref c.Position, new Vector3(pos.X, 0, pos.Z), selfR + 0.07f);
+            foreach (var o in _characters) if (o != c) PushOut(ref c.Position, o.Position, selfR + 0.3f);
+        }
+    }
+
+    private void PushOut(ref Vector3 p, Vector3 centre, float minDist)
+    {
+        float dx = p.X - centre.X, dz = p.Z - centre.Z;
+        float d2 = dx * dx + dz * dz;
+        if (d2 >= minDist * minDist) return;
+        float d = MathF.Sqrt(d2);
+        if (d < 1e-4f) { dx = 1; dz = 0; d = 1; }
+        p.X = centre.X + dx / d * minDist;
+        p.Z = centre.Z + dz / d * minDist;
+        // Kill the velocity component into the obstacle so the character slides along it.
+        var n = new Vector3(dx / d, 0, dz / d);
+        float into = Vector3.Dot(_moveVel, n);
+        if (into < 0) _moveVel -= n * into;
     }
 
     private void ApplyClips()
@@ -444,7 +494,7 @@ public class Game1 : Game
             LightDirection = lightDir, LightColor = new Vector3(1.05f, 0.98f, 0.88f) * 1.7f,
             FillDirection = Vector3.Normalize(new Vector3(0.8f, -0.15f, 0.35f)), FillColor = new Vector3(0.16f, 0.18f, 0.24f),
             SkyColor = new Vector3(0.20f, 0.22f, 0.28f), GroundColor = new Vector3(0.10f, 0.085f, 0.07f),
-            RimColor = new Vector3(0.28f, 0.32f, 0.42f), FogColor = _fogColorLinear, FogStart = 10f, FogEnd = 34f,
+            RimColor = new Vector3(0.28f, 0.32f, 0.42f), FogColor = _fogColorLinear, FogStart = 24f, FogEnd = 75f,
             LightViewProjection = lightVp, ShadowMap = _shadowMap, ShadowMapSize = ShadowSize, ShadowStrength = 0.9f
         };
         var p = _effect.Parameters;
@@ -459,13 +509,14 @@ public class Game1 : Game
         if (_useDeferred && !_wireframe)
         {
             // Dusk balance: a weaker, cooler key so the point lights carry the scene.
-            lighting.LightColor = new Vector3(0.75f, 0.8f, 0.95f) * 0.55f;
-            lighting.SkyColor = new Vector3(0.10f, 0.12f, 0.17f);
-            lighting.GroundColor = new Vector3(0.05f, 0.045f, 0.04f);
-            lighting.FillColor = new Vector3(0.06f, 0.07f, 0.1f);
+            lighting.LightColor = new Vector3(0.95f, 0.92f, 0.98f) * 1.0f;
+            lighting.SkyColor = new Vector3(0.17f, 0.19f, 0.25f);
+            lighting.GroundColor = new Vector3(0.08f, 0.07f, 0.06f);
+            lighting.FillColor = new Vector3(0.10f, 0.11f, 0.15f);
             _effect.CurrentTechnique = _effect.Techniques["GBuffer"];
             _deferred.Render(pp.BackBufferWidth, pp.BackBufferHeight, _shotTarget, view, proj, camPos, lighting, _time,
                 () => DrawScene(shadowPass: false));
+            _weather.Draw(gd, view, proj, camPos, depthAvailable: false, ToneMap(_fogColorLinear));
             if (Program.Options.TryGetValue("debug", out var dbg))
             {
                 Texture2D? t = dbg switch { "light" => _deferred.LightTarget, "normal" => _deferred.NormalTarget, "albedo" => _deferred.AlbedoTarget, _ => null };
@@ -503,10 +554,11 @@ public class Game1 : Game
         p["ShadowMap"].SetValue(_shadowMap);
         p["ShadowMapSize"].SetValue((float)ShadowSize);
         p["ShadowStrength"].SetValue(0.9f);
-        p["FogStart"].SetValue(10f);
-        p["FogEnd"].SetValue(34f);
+        p["FogStart"].SetValue(24f);
+        p["FogEnd"].SetValue(75f);
         p["FogColor"].SetValue(_fogColorLinear);
         DrawScene(shadowPass: false);
+        _weather.Draw(gd, view, proj, camPos, depthAvailable: true, fogTm);
 
         DrawHud(view, proj);
         FinishFrame(shot);
@@ -579,7 +631,7 @@ public class Game1 : Game
             new Vector2(16, 40), new Color(200, 205, 215));
         string clipName = _varied ? "varied" : Clips.All[_clipIndex].Name;
         string windName = _wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale";
-        Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}     Trees: {_trees.Count} ({treeTris:N0} tris, skinned)   Wind: {windName} ({_wind.Strength:0.00})",
+        Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}     Trees: {_trees.Count} ({treeTris:N0} tris, skinned)   Wind: {windName} ({_wind.Strength:0.00})   Rain: {(_weather.Raining ? "on" : "off")}   Particles: {_weather.Count}",
             new Vector2(16, 62), new Color(255, 220, 150));
 
         var lines = _focus >= 0
@@ -587,14 +639,14 @@ public class Game1 : Game
             {
                 $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance",
                 "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
-                "1-7 animation   T wind   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+                "1-7 animation   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
             }
             : new[]
             {
                 "F / Tab  focus a character and take control of it (WASD + Shift)",
                 "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
                 "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-                "Space auto-orbit   T wind   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+                "Space auto-orbit   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
             };
         float y = gd.Viewport.Height - 16 - lines.Length * 20;
         foreach (var l in lines) { Text(l, new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }
