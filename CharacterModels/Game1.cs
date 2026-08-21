@@ -12,6 +12,16 @@ public class Game1 : Game
     private SpriteBatch _spriteBatch = null!;
     private SpriteFont _font = null!;
     private Effect _effect = null!;
+    private Effect _deferredFx = null!;
+    private DeferredRenderer _deferred = null!;
+    private bool _useDeferred = true;
+    private static readonly (Vector3 pos, Vector3 color, float radius, float intensity, float flicker)[] Lamps =
+    {
+        (new Vector3(-3.4f, 1.35f, 1.7f), new Vector3(1.0f, 0.55f, 0.22f), 5.5f, 5.0f, 0.25f),
+        (new Vector3(3.4f, 1.35f, 1.7f), new Vector3(0.3f, 0.5f, 1.0f), 5.5f, 4.0f, 0f),
+        (new Vector3(0f, 1.9f, -2.8f), new Vector3(0.9f, 0.3f, 0.8f), 6f, 4.0f, 0f),
+        (new Vector3(-1.2f, 0.45f, 3.2f), new Vector3(0.3f, 1.0f, 0.45f), 3.5f, 3.0f, 0f)
+    };
     private Texture2D _grain = null!;
     private RenderTarget2D _shadowMap = null!;
     private const int ShadowSize = 2048;
@@ -68,6 +78,10 @@ public class Game1 : Game
         _spriteBatch = new SpriteBatch(GraphicsDevice);
         _font = Content.Load<SpriteFont>("Font");
         _effect = Content.Load<Effect>("Character");
+        _deferredFx = Content.Load<Effect>("Deferred");
+        _deferred = new DeferredRenderer(GraphicsDevice, _deferredFx);
+        foreach (var (pos, color, radius, intensity, flicker) in Lamps)
+            _deferred.Lights.Add(new PointLight { Position = pos, Color = color, Radius = radius, Intensity = intensity, Flicker = flicker });
         _grain = BuildGrainTexture(256);
         _shadowMap = new RenderTarget2D(GraphicsDevice, ShadowSize, ShadowSize, false, SurfaceFormat.Single, DepthFormat.Depth24, 0, RenderTargetUsage.DiscardContents);
 
@@ -82,6 +96,21 @@ public class Game1 : Game
             _characters.Add(c);
         }
         BuildGround();
+
+        // The mage's orb is a light: follow the staff tip through the weapon bone (works sheathed or drawn).
+        foreach (var c in _characters)
+        {
+            if (c.Spec.Weapon != Weapon.Staff) continue;
+            float s = c.Spec.Height / 1.8f;
+            var orbLocal = new Vector3(0, 1.99f - 0.85f, 0.05f) * s;
+            var mage = c;
+            _deferred.Lights.Add(new PointLight
+            {
+                Color = new Vector3(0.45f, 0.8f, 1.0f), Radius = 3.2f, Intensity = 5f, Flicker = 0.12f,
+                Follow = () => Vector3.Transform(orbLocal, mage.Skeleton["weaponR"].World * mage.World)
+            });
+        }
+        if (Program.Flag("forward")) _useDeferred = false;
 
         // Startup options (for scripted screenshots / demos).
         _camYaw = MathHelper.ToRadians(Program.Opt("yaw", 0));
@@ -156,7 +185,7 @@ public class Game1 : Game
         var w = Weighter.Fixed(sk, "root");
         var mb = new MeshBuilder();
         const int half = 14;
-        var a = new Color(64, 62, 68); var b = new Color(54, 52, 58);
+        var a = new Color(92, 90, 96); var b = new Color(78, 76, 82);
         for (int z = -half; z < half; z++)
         for (int x = -half; x < half; x++)
             mb.Box(new Vector3(x + 0.5f, -0.02f, z + 0.5f), new Vector3(0.985f, 0.04f, 0.985f), ((x + z) & 1) == 0 ? a : b, new Vector2(0.25f, 0.3f), w);
@@ -170,6 +199,17 @@ public class Game1 : Game
                 new Ring(c.Position + new Vector3(0, 0.03f, 0), 0.47f, col, new Vector2(0.4f, 0.4f)) { Tangent = Vector3.Up },
                 new Ring(c.Position + new Vector3(0, 0.03f, 0), 0.0f, col, new Vector2(0.4f, 0.4f)) { Tangent = Vector3.Up }
             }, 40, w, Vector3.Backward);
+        }
+        foreach (var (pos, color, _, _, _) in Lamps)
+        {
+            var pole = new Color(40, 38, 42);
+            mb.Loft(new[]
+            {
+                new Ring(new Vector3(pos.X, 0, pos.Z), 0.035f, pole, new Vector2(0.4f, 0.5f)),
+                new Ring(new Vector3(pos.X, pos.Y - 0.12f, pos.Z), 0.025f, pole, new Vector2(0.4f, 0.5f))
+            }, 10, w, Vector3.Backward, capEnd: true, capSteps: 2);
+            var c = new Color(color.X, color.Y, color.Z);
+            mb.Ellipsoid(pos, new Vector3(0.09f), 14, 10, c, Mat.Glow, w);
         }
         (_groundVb, _groundIb) = mb.Upload(GraphicsDevice);
     }
@@ -187,6 +227,7 @@ public class Game1 : Game
         if (keys.IsKeyDown(Keys.Escape)) Exit();
         if (Pressed(Keys.Space)) _autoOrbit = !_autoOrbit;
         if (Pressed(Keys.G)) _wireframe = !_wireframe;
+        if (Pressed(Keys.B)) _useDeferred = !_useDeferred;
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
         if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
         if (Pressed(Keys.F) || Pressed(Keys.Tab))
@@ -337,6 +378,46 @@ public class Game1 : Game
         string? shot = Program.Options.TryGetValue("shot", out var sp) ? sp : null;
         if (shot != null && _shotTarget == null)
             _shotTarget = new RenderTarget2D(gd, pp.BackBufferWidth, pp.BackBufferHeight, false, SurfaceFormat.Color, DepthFormat.Depth24, 8, RenderTargetUsage.DiscardContents);
+        var lighting = new SceneLighting
+        {
+            LightDirection = lightDir, LightColor = new Vector3(1.05f, 0.98f, 0.88f) * 1.7f,
+            FillDirection = Vector3.Normalize(new Vector3(0.8f, -0.15f, 0.35f)), FillColor = new Vector3(0.16f, 0.18f, 0.24f),
+            SkyColor = new Vector3(0.20f, 0.22f, 0.28f), GroundColor = new Vector3(0.10f, 0.085f, 0.07f),
+            RimColor = new Vector3(0.28f, 0.32f, 0.42f), FogColor = _fogColorLinear, FogStart = 10f, FogEnd = 34f,
+            LightViewProjection = lightVp, ShadowMap = _shadowMap, ShadowMapSize = ShadowSize, ShadowStrength = 0.9f
+        };
+        var p = _effect.Parameters;
+        p["View"].SetValue(view);
+        p["Projection"].SetValue(proj);
+        p["GrainTexture"].SetValue(_grain);
+        p["GrainStrength"].SetValue(0.35f);
+
+        if (_useDeferred && !_wireframe)
+        {
+            // Dusk balance: a weaker, cooler key so the point lights carry the scene.
+            lighting.LightColor = new Vector3(0.75f, 0.8f, 0.95f) * 0.55f;
+            lighting.SkyColor = new Vector3(0.10f, 0.12f, 0.17f);
+            lighting.GroundColor = new Vector3(0.05f, 0.045f, 0.04f);
+            lighting.FillColor = new Vector3(0.06f, 0.07f, 0.1f);
+            _effect.CurrentTechnique = _effect.Techniques["GBuffer"];
+            _deferred.Render(pp.BackBufferWidth, pp.BackBufferHeight, _shotTarget, view, proj, camPos, lighting, _time,
+                () => DrawScene(shadowPass: false));
+            if (Program.Options.TryGetValue("debug", out var dbg))
+            {
+                Texture2D? t = dbg switch { "light" => _deferred.LightTarget, "normal" => _deferred.NormalTarget, "albedo" => _deferred.AlbedoTarget, _ => null };
+                if (t != null)
+                {
+                    _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp);
+                    _spriteBatch.Draw(t, new Rectangle(0, 0, pp.BackBufferWidth, pp.BackBufferHeight), Color.White);
+                    _spriteBatch.End();
+                }
+            }
+            DrawHud(view, proj);
+            FinishFrame(shot);
+            base.Draw(gameTime);
+            return;
+        }
+
         gd.SetRenderTarget(_shotTarget);
         var fogTm = ToneMap(_fogColorLinear);
         gd.Clear(new Color(fogTm));
@@ -346,9 +427,6 @@ public class Game1 : Game
         gd.SamplerStates[1] = SamplerState.LinearWrap;
 
         _effect.CurrentTechnique = _effect.Techniques["Skinned"];
-        var p = _effect.Parameters;
-        p["View"].SetValue(view);
-        p["Projection"].SetValue(proj);
         p["LightViewProjection"].SetValue(lightVp);
         p["LightDirection"].SetValue(lightDir);
         p["LightColor"].SetValue(new Vector3(1.05f, 0.98f, 0.88f) * 1.7f);
@@ -361,25 +439,26 @@ public class Game1 : Game
         p["ShadowMap"].SetValue(_shadowMap);
         p["ShadowMapSize"].SetValue((float)ShadowSize);
         p["ShadowStrength"].SetValue(0.9f);
-        p["GrainTexture"].SetValue(_grain);
-        p["GrainStrength"].SetValue(0.35f);
         p["FogStart"].SetValue(10f);
         p["FogEnd"].SetValue(34f);
         p["FogColor"].SetValue(_fogColorLinear);
         DrawScene(shadowPass: false);
 
         DrawHud(view, proj);
-        if (_shotTarget != null)
-        {
-            gd.SetRenderTarget(null);
-            if (++_frame >= 3)
-            {
-                using var fs = System.IO.File.Create(shot!);
-                _shotTarget.SaveAsPng(fs, _shotTarget.Width, _shotTarget.Height);
-                Exit();
-            }
-        }
+        FinishFrame(shot);
         base.Draw(gameTime);
+    }
+
+    private void FinishFrame(string? shot)
+    {
+        if (_shotTarget == null) return;
+        GraphicsDevice.SetRenderTarget(null);
+        if (++_frame >= 3)
+        {
+            using var fs = System.IO.File.Create(shot!);
+            _shotTarget.SaveAsPng(fs, _shotTarget.Width, _shotTarget.Height);
+            Exit();
+        }
     }
 
     private void DrawScene(bool shadowPass)
@@ -426,7 +505,8 @@ public class Game1 : Game
         }
 
         Text("MonoGame Procedural Characters", new Vector2(16, 12), Color.White, 1.3f);
-        Text($"{_characters.Count} characters  |  {tris:N0} triangles  {verts:N0} vertices  |  {_characters[0].Skeleton.Count} bones each  |  GPU skinning + PCF shadows",
+        string mode = _useDeferred ? $"deferred: {_deferred.Lights.Count} point lights + shadowed key ({_deferred.LightFormat})" : "forward: key + fill, PCF shadows";
+        Text($"{_characters.Count} characters  |  {tris:N0} triangles  {verts:N0} vertices  |  {_characters[0].Skeleton.Count} bones each  |  {mode}",
             new Vector2(16, 40), new Color(200, 205, 215));
         string clipName = _varied ? "varied" : Clips.All[_clipIndex].Name;
         Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}", new Vector2(16, 62), new Color(255, 220, 150));
@@ -436,14 +516,14 @@ public class Game1 : Game
             {
                 $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance",
                 "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
-                "1-7 animation   L/K rotate light   G wireframe   R reset   Esc quit"
+                "1-7 animation   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
             }
             : new[]
             {
                 "F / Tab  focus a character and take control of it (WASD + Shift)",
                 "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
                 "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-                "Space auto-orbit   L/K rotate light   G wireframe   R reset   Esc quit"
+                "Space auto-orbit   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
             };
         float y = gd.Viewport.Height - 16 - lines.Length * 20;
         foreach (var l in lines) { Text(l, new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }

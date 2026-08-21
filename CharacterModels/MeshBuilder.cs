@@ -37,7 +37,7 @@ public static class Mat
     public static readonly Vector2 Hair = new(0.3f, 0.45f);
     public static readonly Vector2 Eye = new(0.8f, 0.95f);
     public static readonly Vector2 Wood = new(0.2f, 0.3f);
-    public static readonly Vector2 Glow = new(0.0f, 0.0f);
+    public static readonly Vector2 Glow = new(0.0f, 1.0f);   // spec 0 + shininess 1 = emissive flag (deferred path)
 }
 
 /// <summary>Computes skin weights for a vertex position from distance to bone segments.</summary>

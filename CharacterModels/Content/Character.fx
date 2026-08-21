@@ -67,6 +67,7 @@ struct VSOutput
     float4 LightPos  : TEXCOORD2;
     float3 ObjPos    : TEXCOORD3;
     float2 Material  : TEXCOORD4;
+    float4 ClipPos   : TEXCOORD5;
 };
 
 void Skin(inout float4 position, inout float3 normal, float4 indices, float4 weights)
@@ -91,6 +92,7 @@ VSOutput MainVS(VSInput input)
     float4 worldPos = mul(pos, World);
     o.WorldPos = worldPos.xyz;
     o.Position = mul(mul(worldPos, View), Projection);
+    o.ClipPos = o.Position;
     o.Normal = normalize(mul(nrm, (float3x3)World));
     o.Color = input.Color;
     o.LightPos = mul(worldPos, LightViewProjection);
@@ -165,6 +167,36 @@ float4 MainPS(VSOutput input) : COLOR0
     color = 1.0 - exp(-color * 1.5);
     color = pow(saturate(color), 1.0 / 2.2);
     return float4(color, input.Color.a);
+}
+
+// ---------------------------------------------------------------- G-buffer pass (deferred)
+// RT0: albedo (sRGB) + specular strength, RT1: world normal*0.5+0.5 + shininess, RT2: clip depth z/w (Single).
+struct GBufferOut
+{
+    float4 Albedo : COLOR0;
+    float4 Normal : COLOR1;
+    float4 Depth  : COLOR2;
+};
+
+GBufferOut GBufferPS(VSOutput input)
+{
+    GBufferOut o;
+    float3 op = input.ObjPos * 6.0;
+    float g = tex2D(GrainSampler, op.xy).r * 0.5 + tex2D(GrainSampler, op.zy + 0.37).r * 0.5;
+    float3 albedo = input.Color.rgb * lerp(1.0, 0.75 + 0.5 * g, GrainStrength);
+    o.Albedo = float4(albedo, input.Material.x);
+    o.Normal = float4(normalize(input.Normal) * 0.5 + 0.5, input.Material.y);
+    o.Depth = float4(input.ClipPos.z / input.ClipPos.w, 0, 0, 1);
+    return o;
+}
+
+technique GBuffer
+{
+    pass P0
+    {
+        VertexShader = compile VS_SHADERMODEL MainVS();
+        PixelShader  = compile PS_SHADERMODEL GBufferPS();
+    }
 }
 
 // ---------------------------------------------------------------- shadow pass
