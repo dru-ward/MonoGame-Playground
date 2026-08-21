@@ -31,6 +31,9 @@ float  GrainStrength;
 float  FogStart;
 float  FogEnd;
 float3 FogColor;
+float  Time;
+float  WindStrength;
+float3 WindDirection;
 
 texture ShadowMap;
 sampler ShadowSampler = sampler_state
@@ -70,6 +73,19 @@ struct VSOutput
     float4 ClipPos   : TEXCOORD5;
 };
 
+// Foliage flutter: vertices with colour alpha < 1 ripple along their normal at high frequency.
+// Phase comes from world position so neighbouring leaves move coherently and different trees differ.
+void Flutter(inout float4 worldPos, float3 worldNrm, float alpha)
+{
+    float amount = (1.0 - alpha) * WindStrength;
+    if (amount <= 0.0) return;
+    float ph = dot(worldPos.xyz, float3(3.1, 2.3, 2.7));
+    float wave = sin(Time * 7.0 + ph) * 0.6 + sin(Time * 11.3 + ph * 1.7) * 0.4;
+    float gust = 0.6 + 0.4 * sin(Time * 0.9 + dot(worldPos.xyz, WindDirection) * 0.35);
+    worldPos.xyz += worldNrm * wave * gust * amount * 0.07;
+    worldPos.xyz += WindDirection * gust * amount * 0.03;
+}
+
 void Skin(inout float4 position, inout float3 normal, float4 indices, float4 weights)
 {
     float4x3 skin = 0;
@@ -90,10 +106,11 @@ VSOutput MainVS(VSInput input)
     Skin(pos, nrm, input.BlendIndices, input.BlendWeights);
 
     float4 worldPos = mul(pos, World);
+    o.Normal = normalize(mul(nrm, (float3x3)World));
+    Flutter(worldPos, o.Normal, input.Color.a);
     o.WorldPos = worldPos.xyz;
     o.Position = mul(mul(worldPos, View), Projection);
     o.ClipPos = o.Position;
-    o.Normal = normalize(mul(nrm, (float3x3)World));
     o.Color = input.Color;
     o.LightPos = mul(worldPos, LightViewProjection);
     o.Material = input.Material;
@@ -166,7 +183,7 @@ float4 MainPS(VSOutput input) : COLOR0
     // Exposure tone map + gamma.
     color = 1.0 - exp(-color * 1.5);
     color = pow(saturate(color), 1.0 / 2.2);
-    return float4(color, input.Color.a);
+    return float4(color, 1.0);   // alpha carries flutter weight, never opacity
 }
 
 // ---------------------------------------------------------------- G-buffer pass (deferred)
@@ -213,6 +230,7 @@ ShadowVSOutput ShadowVS(VSInput input)
     float3 nrm = input.Normal;
     Skin(pos, nrm, input.BlendIndices, input.BlendWeights);
     float4 worldPos = mul(pos, World);
+    Flutter(worldPos, normalize(mul(nrm, (float3x3)World)), input.Color.a);
     o.Position = mul(worldPos, LightViewProjection);
     o.Depth = o.Position.z / o.Position.w;
     return o;

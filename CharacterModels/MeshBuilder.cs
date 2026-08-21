@@ -205,9 +205,11 @@ public sealed class MeshBuilder
 
     /// <summary>UV ellipsoid with optional per-direction radius shaping (shape returns a scale factor).</summary>
     public void Ellipsoid(Vector3 center, Vector3 radii, int segments, int stacks, Color color, Vector2 material,
-                          Weighter weighter, Func<Vector3, float>? shape = null, Quaternion? orientation = null)
+                          Weighter weighter, Func<Vector3, float>? shape = null, Quaternion? orientation = null, byte alpha = 255,
+                          Func<Vector3, Color>? colorFn = null)
     {
         int baseIndex = _verts.Count;
+        color.A = alpha;
         var rot = orientation ?? Quaternion.Identity;
         for (int st = 0; st <= stacks; st++)
         {
@@ -219,7 +221,8 @@ public sealed class MeshBuilder
                 var d = new Vector3(ring * MathF.Sin(theta), y, ring * MathF.Cos(theta));
                 float k = shape?.Invoke(d) ?? 1f;
                 var p = center + Vector3.Transform(d * radii * k, rot);
-                _verts.Add(new SkinnedVertex { Position = p, Color = color, Material = material });
+                var c = colorFn?.Invoke(d) ?? color; c.A = alpha;
+                _verts.Add(new SkinnedVertex { Position = p, Color = c, Material = material });
             }
         }
         for (int st = 0; st < stacks; st++)
@@ -232,6 +235,44 @@ public sealed class MeshBuilder
             }
         }
         FinishPart(baseIndex, weighter);
+    }
+
+    // ------------------------------------------------------------- parametric
+
+    /// <summary>
+    /// Generic parametric surface: u in [0,1) around (wrapped when closedU) and v in [0,1] along.
+    /// Winding matches Ellipsoid (u = angle with x = sin, z = cos; v from top to bottom gives outward normals).
+    /// doubleSided emits a second copy with reversed winding so thin strips (leaves, fronds) are lit from both sides.
+    /// </summary>
+    public void Parametric(int segments, int stacks, Func<float, float, Vector3> pos, Func<float, float, Color> color,
+                           Vector2 material, Weighter weighter, bool closedU = true, bool doubleSided = false, byte alpha = 255)
+    {
+        int cols = closedU ? segments : segments + 1;
+        for (int side = 0; side < (doubleSided ? 2 : 1); side++)
+        {
+            int baseIndex = _verts.Count;
+            for (int st = 0; st <= stacks; st++)
+            {
+                float v = st / (float)stacks;
+                for (int s = 0; s < cols; s++)
+                {
+                    float u = s / (float)segments;
+                    var c = color(u, v); c.A = alpha;
+                    _verts.Add(new SkinnedVertex { Position = pos(u, v), Color = c, Material = material });
+                }
+            }
+            for (int st = 0; st < stacks; st++)
+            {
+                int r0 = baseIndex + st * cols, r1 = r0 + cols;
+                for (int s = 0; s < segments; s++)
+                {
+                    int s1 = closedU ? (s + 1) % segments : s + 1;
+                    if (side == 0) AddQuad(r0 + s, r0 + s1, r1 + s1, r1 + s);
+                    else AddQuad(r0 + s, r1 + s, r1 + s1, r0 + s1);
+                }
+            }
+            FinishPart(baseIndex, weighter);
+        }
     }
 
     // ------------------------------------------------------------------ boxes

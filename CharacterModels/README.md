@@ -7,6 +7,12 @@ materials, animations, lighting shader) is built at startup by the C# code in th
 ![Line-up](docs/screenshot.png)
 ![Sheathed](docs/sheathed.png)
 ![Deferred lighting](docs/deferred.png)
+![Trees](docs/trees.png)
+![Forest](docs/forest.png)
+
+The plaza is ringed by **procedural trees** in six styles (oak, autumn maple, pine, birch, palm, dead) that
+sway in the wind — each tree is a small skinned rig, so the same GPU skinning that moves the characters bends
+the trunks and branches, while the vertex shader adds a high-frequency leaf flutter.
 
 ## Run
 
@@ -30,6 +36,7 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | Mouse drag / arrows | Orbit camera · right-drag pans · wheel zooms |
 | `Space` | Toggle auto-orbit turntable |
 | `L` / `K` | Rotate the key light |
+| `T` | Cycle wind: still → calm → breezy → gale |
 | `B` | Toggle deferred (many coloured point lights) / forward (MSAA) rendering |
 | `G` | Wireframe |
 | `R` | Reset camera |
@@ -48,6 +55,8 @@ CharacterModels --export ./obj --shot tmp.png
 `--light deg` key-light yaw, `--forward` start in forward mode, `--debug light|normal|albedo` show a G-buffer/light buffer, `--drawn` start with weapons in hand, `--draw s` trigger a draw at *s* seconds into the warm-up, `--shot file.png` render one frame offscreen (8× MSAA) and exit,
 `--export dir` write every character's bind-pose mesh as a Wavefront OBJ (with vertex colours;
 opens in Blender).
+`--trees n` number of trees planted around the plaza (0 = none), `--seed n` planting/shape seed,
+`--gallery` one tree of each style in a row behind the characters, `--wind s` wind strength (0 still … 1.3 gale).
 
 ## How it works
 
@@ -60,6 +69,7 @@ opens in Blender).
 | `Animation.cs` | `Pose` / `PoseWriter` hide the axis conventions ("swing this limb forward 30°", twist about the bone's own axis). `Clips` are procedural functions of time built from cyclic Catmull-Rom keyframes and C1-smooth curves: walk/run use `Gait` tables of hip/knee/ankle/toe angle over the stride (modelled on human gait data: heel strike, loading response, push-off, swing) plus pelvis drop/rotation, trunk counter-rotation and arm swing; the wave and the weapon draw/sheathe reach are solved with two-bone analytic arm IK (`PoseWriter.ArmIK`). `AnimationPlayer` cross-fades with slerp + smootherstep and then runs every upper-body bone through a damped second-order spring, so hands/head lag and settle (follow-through / overlapping action) instead of snapping. |
 | `DeferredRenderer.cs` + `Content/Deferred.fx` | Deferred path: the character effect writes a G-buffer through MRT (albedo+spec, world normal+shininess, depth), a half-float light buffer accumulates a shadowed directional pass plus additive sphere-volume point lights (lamp posts, and the mage's orb following its weapon bone), then a full-screen composite does rim, emissive, fog and tone mapping. `--debug albedo|normal|light` blits an intermediate buffer. |
 | `Content/Character.fx` | HLSL (compiled to GLSL by MGCB): 4-bone GPU skinning, wrap-diffuse key light, hemisphere ambient, fill light, Blinn-Phong specular with Fresnel boost (per-vertex material = specular strength + shininess), rim light, 3×3 PCF shadow map, object-space procedural grain, fog, exposure tone-mapping + gamma. A second technique renders the shadow map. |
+| `Trees.cs` | `TreeBuilder` grows a trunk chain of bones (4–6 segments, stiff at the base) with branch / frond bones hanging off it, then lofts bark tubes, shaped-ellipsoid leaf masses (lumpy radius function, darker underside baked into vertex colour), conical pine tiers and serrated palm fronds through `MeshBuilder.Parametric`. `Wind` is a direction, a strength and a gust envelope that travels along the wind so downwind trees react later; `Tree.Update` rotates every bone about the cross-wind axis by `strength × gust × flex × oscillation`, with flex and frequency growing toward the tips. Foliage vertices carry a flutter weight in colour alpha that the vertex shader turns into a ripple along the normal. |
 | `Game1.cs` | Scene, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
 
 ### Making a new character

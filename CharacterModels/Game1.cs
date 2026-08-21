@@ -27,6 +27,10 @@ public class Game1 : Game
     private const int ShadowSize = 2048;
 
     private readonly List<Character> _characters = new();
+    private readonly List<Tree> _trees = new();
+    private readonly Wind _wind = new();
+    private static readonly float[] WindPresets = { 0f, 0.35f, 0.7f, 1.3f };
+    private int _windPreset = 2;
     private VertexBuffer _groundVb = null!;
     private IndexBuffer _groundIb = null!;
     private readonly Matrix[] _identityPalette = { Matrix.Identity };
@@ -96,6 +100,8 @@ public class Game1 : Game
             _characters.Add(c);
         }
         BuildGround();
+        PlantTrees((int)Program.Opt("trees", 22), (int)Program.Opt("seed", 7));
+        _wind.Strength = Program.Opt("wind", WindPresets[_windPreset]);
 
         // The mage's orb is a light: follow the staff tip through the weapon bone (works sheathed or drawn).
         foreach (var c in _characters)
@@ -133,6 +139,44 @@ public class Game1 : Game
         {
             if (drawAt >= 0 && t >= drawAt) { foreach (var c in _characters) c.ToggleWeapon(); drawAt = -1; }
             foreach (var c in _characters) c.Update(1f / 60f);
+            _time += 1f / 60f;
+        }
+        foreach (var t in _trees) t.Update(_time, _wind);
+    }
+
+    /// <summary>Plants a ring of mixed-style trees around the plaza with a minimum spacing; --trees 0 disables.</summary>
+    private void PlantTrees(int count, int seed)
+    {
+        var rnd = new Random(seed);
+        var placed = new List<Vector3>();
+        var styles = (TreeStyle[])Enum.GetValues(typeof(TreeStyle));
+        if (Program.Flag("gallery"))
+        {
+            // One of each style in a row behind the characters (README / inspection shots).
+            for (int i = 0; i < styles.Length; i++)
+            {
+                var t = TreeBuilder.Build(GraphicsDevice, styles[i], seed * 131 + i, 1f);
+                t.Position = new Vector3((i - (styles.Length - 1) * 0.5f) * 3.2f, 0, -3.5f);
+                _trees.Add(t);
+            }
+            return;
+        }
+        int tries = 0;
+        while (_trees.Count < count && tries++ < count * 40)
+        {
+            float ang = (float)rnd.NextDouble() * MathHelper.TwoPi;
+            float rad = 6.2f + (float)rnd.NextDouble() * 6.5f;
+            var pos = new Vector3(MathF.Cos(ang) * rad, 0, MathF.Sin(ang) * rad);
+            if (MathF.Abs(pos.X) > 13f || MathF.Abs(pos.Z) > 13f) continue;
+            bool ok = true;
+            foreach (var q in placed) if (Vector3.DistanceSquared(q, pos) < 2.6f * 2.6f) { ok = false; break; }
+            if (!ok) continue;
+            // Cycle styles so every kind appears; palms and dead trees are rarer.
+            var style = styles[_trees.Count % styles.Length];
+            if ((style == TreeStyle.Palm || style == TreeStyle.Dead) && rnd.NextDouble() < 0.4) style = TreeStyle.Oak;
+            var t = TreeBuilder.Build(GraphicsDevice, style, seed * 131 + _trees.Count, 0.85f + (float)rnd.NextDouble() * 0.4f);
+            t.Position = pos; t.Yaw = (float)rnd.NextDouble() * MathHelper.TwoPi;
+            _trees.Add(t); placed.Add(pos);
         }
     }
 
@@ -186,9 +230,23 @@ public class Game1 : Game
         var mb = new MeshBuilder();
         const int half = 14;
         var a = new Color(92, 90, 96); var b = new Color(78, 76, 82);
+        var grass = new Random(3);
         for (int z = -half; z < half; z++)
         for (int x = -half; x < half; x++)
-            mb.Box(new Vector3(x + 0.5f, -0.02f, z + 0.5f), new Vector3(0.985f, 0.04f, 0.985f), ((x + z) & 1) == 0 ? a : b, new Vector2(0.25f, 0.3f), w);
+        {
+            float cx = x + 0.5f, cz = z + 0.5f;
+            float r = MathF.Sqrt(cx * cx + cz * cz);
+            if (r < 5.2f)
+                mb.Box(new Vector3(cx, -0.02f, cz), new Vector3(0.985f, 0.04f, 0.985f), ((x + z) & 1) == 0 ? a : b, new Vector2(0.25f, 0.3f), w);
+            else
+            {
+                // Grass: a low, slightly uneven slab with hue variation, and a ring of kerb stones at the plaza rim.
+                int v = grass.Next(-9, 10);
+                var g = r < 5.9f ? new Color(84, 80, 78) : new Color(58 + v, 92 + v + grass.Next(-6, 7), 40 + v);
+                float h = r < 5.9f ? 0.05f : 0.03f + (float)grass.NextDouble() * 0.025f;
+                mb.Box(new Vector3(cx, h * 0.5f - 0.02f, cz), new Vector3(1.0f, h, 1.0f), g, r < 5.9f ? new Vector2(0.2f, 0.3f) : Mat.Cloth, w);
+            }
+        }
         foreach (var c in _characters)
         {
             var col = new Color(88, 86, 94);
@@ -228,6 +286,7 @@ public class Game1 : Game
         if (Pressed(Keys.Space)) _autoOrbit = !_autoOrbit;
         if (Pressed(Keys.G)) _wireframe = !_wireframe;
         if (Pressed(Keys.B)) _useDeferred = !_useDeferred;
+        if (Pressed(Keys.T)) { _windPreset = (_windPreset + 1) % WindPresets.Length; _wind.Strength = WindPresets[_windPreset]; }
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
         if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
         if (Pressed(Keys.F) || Pressed(Keys.Tab))
@@ -269,6 +328,7 @@ public class Game1 : Game
 
         if (_focus >= 0) UpdatePlayer(dt, keys);
         foreach (var c in _characters) c.Update(dt);
+        foreach (var t in _trees) t.Update(_time, _wind);
 
         _prevKeys = keys; _prevMouse = mouse;
         base.Update(gameTime);
@@ -360,8 +420,9 @@ public class Game1 : Game
         // Light
         var lightDir = Vector3.Normalize(Vector3.Transform(new Vector3(0, -0.85f, -0.6f), Matrix.CreateRotationY(_lightYaw)));
         var sceneCenter = new Vector3(0, 0.9f, 0);
-        var lightView = Matrix.CreateLookAt(sceneCenter - lightDir * 12f, sceneCenter, Vector3.Up);
-        var lightProj = Matrix.CreateOrthographic(8.5f, 8.5f, 1f, 24f);
+        var lightView = Matrix.CreateLookAt(sceneCenter - lightDir * 18f, sceneCenter, Vector3.Up);
+        float shadowExtent = _trees.Count > 0 ? 20f : 8.5f;
+        var lightProj = Matrix.CreateOrthographic(shadowExtent, shadowExtent, 1f, 36f);
         var lightVp = lightView * lightProj;
 
         // ---- Shadow pass
@@ -391,6 +452,9 @@ public class Game1 : Game
         p["Projection"].SetValue(proj);
         p["GrainTexture"].SetValue(_grain);
         p["GrainStrength"].SetValue(0.35f);
+        p["Time"].SetValue(_time);
+        p["WindStrength"].SetValue(_wind.Strength);
+        p["WindDirection"].SetValue(_wind.Direction);
 
         if (_useDeferred && !_wireframe)
         {
@@ -476,17 +540,21 @@ public class Game1 : Game
             gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, _groundIb.IndexCount / 3);
         }
 
-        foreach (var c in _characters)
+        foreach (var c in _characters) DrawSkinned(c.World, c.Skeleton.Palette, c.VertexBuffer, c.IndexBuffer);
+        foreach (var t in _trees) DrawSkinned(t.World, t.Skeleton.Palette, t.VertexBuffer, t.IndexBuffer);
+    }
+
+    private void DrawSkinned(Matrix world, Matrix[] palette, VertexBuffer vb, IndexBuffer ib)
+    {
+        var gd = GraphicsDevice;
+        _effect.Parameters["World"].SetValue(world);
+        _effect.Parameters["Bones"].SetValue(palette);
+        gd.SetVertexBuffer(vb);
+        gd.Indices = ib;
+        foreach (var pass in _effect.CurrentTechnique.Passes)
         {
-            p["World"].SetValue(c.World);
-            p["Bones"].SetValue(c.Skeleton.Palette);
-            gd.SetVertexBuffer(c.VertexBuffer);
-            gd.Indices = c.IndexBuffer;
-            foreach (var pass in _effect.CurrentTechnique.Passes)
-            {
-                pass.Apply();
-                gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, c.IndexBuffer.IndexCount / 3);
-            }
+            pass.Apply();
+            gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, ib.IndexCount / 3);
         }
     }
 
@@ -495,8 +563,9 @@ public class Game1 : Game
         var gd = GraphicsDevice;
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
 
-        int tris = 0, verts = 0;
+        int tris = 0, verts = 0, treeTris = 0;
         foreach (var c in _characters) { tris += c.Triangles; verts += c.Vertices; }
+        foreach (var t in _trees) treeTris += t.Triangles;
 
         void Text(string s, Vector2 pos, Color col, float scale = 1f)
         {
@@ -509,21 +578,23 @@ public class Game1 : Game
         Text($"{_characters.Count} characters  |  {tris:N0} triangles  {verts:N0} vertices  |  {_characters[0].Skeleton.Count} bones each  |  {mode}",
             new Vector2(16, 40), new Color(200, 205, 215));
         string clipName = _varied ? "varied" : Clips.All[_clipIndex].Name;
-        Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}", new Vector2(16, 62), new Color(255, 220, 150));
+        string windName = _wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale";
+        Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}     Trees: {_trees.Count} ({treeTris:N0} tris, skinned)   Wind: {windName} ({_wind.Strength:0.00})",
+            new Vector2(16, 62), new Color(255, 220, 150));
 
         var lines = _focus >= 0
             ? new[]
             {
                 $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance",
                 "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
-                "1-7 animation   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+                "1-7 animation   T wind   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
             }
             : new[]
             {
                 "F / Tab  focus a character and take control of it (WASD + Shift)",
                 "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
                 "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-                "Space auto-orbit   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+                "Space auto-orbit   T wind   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
             };
         float y = gd.Viewport.Height - 16 - lines.Length * 20;
         foreach (var l in lines) { Text(l, new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }
