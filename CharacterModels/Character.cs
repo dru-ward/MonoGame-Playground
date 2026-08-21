@@ -54,6 +54,13 @@ public sealed class Character
     // ---- Animation state machine -------------------------------------------------------------
     /// <summary>Looping clip used when no action is playing (idle/walk/run, or whatever the viewer chose).</summary>
     public Clip Locomotion = Clips.Idle;
+    /// <summary>Speed-driven locomotion: set <see cref="Speed"/> every frame and use this as the Locomotion clip.
+    /// Idle, walk and run share one continuously integrated stride phase, so changing speed never cross-fades
+    /// two out-of-phase cycles (the source of the old back-and-forth wobble).</summary>
+    public Clip Move { get; private set; } = null!;
+    public float Speed;                 // world m/s
+    private float _stridePhase;
+    private Pose? _locoPose;
     public Clip? Action { get; private set; }
     public Clip? Queued;
     private float _actionTime;
@@ -91,8 +98,34 @@ public sealed class Character
         return Clips.Reach(Skeleton, reaches, 0.9f);
     }
 
+    /// <summary>Builds the speed-driven Move clip; needs the skeleton (CharacterBuilder calls it).</summary>
+    public void InitMove()
+    {
+        _locoPose = new Pose(Skeleton.Count);
+        Move = new Clip("Move", (t, w) =>
+        {
+            float sp = Speed / (Spec.Height / 1.8f);                    // normalise to the gait tables' reference height
+            float amp = Clips.Smooth01(sp / 0.7f);                      // idle -> stroll over the first 0.7 m/s
+            float r = Clips.Smooth01((sp - Clips.WalkGait.Speed) / (Clips.RunGait.Speed - Clips.WalkGait.Speed));
+            Clips.Idle.Evaluate(t, w);
+            if (amp <= 0.001f) return;
+            _locoPose!.Reset();
+            Clips.Locomotion(_stridePhase, new PoseWriter(_locoPose, Skeleton), Clips.WalkGait, Clips.RunGait, r);
+            w.BlendToward(_locoPose, amp);
+        });
+    }
+
     public void Update(float dt)
     {
+        // Integrate the stride phase from speed so the feet match the ground and the cycle never jumps.
+        float normSpeed = Speed / (Spec.Height / 1.8f);
+        if (normSpeed > 0.05f) _stridePhase += dt * Clips.StrideHz(normSpeed);
+        else
+        {
+            // Settle to the nearest double-support pose so a stop never freezes mid-swing.
+            float target = MathF.Round(_stridePhase * 2f) / 2f;
+            _stridePhase = MathHelper.Lerp(_stridePhase, target, 1 - MathF.Exp(-dt * 10f));
+        }
         if (Action != null)
         {
             _actionTime += dt;
@@ -167,12 +200,14 @@ public static class CharacterBuilder
         BuildBody(mb, skel, spec);
         var (vb, ib) = mb.Upload(device);
         skel.Update();
-        return new Character
+        var character = new Character
         {
             Spec = spec, Skeleton = skel, Player = new AnimationPlayer(skel),
             VertexBuffer = vb, IndexBuffer = ib, Triangles = mb.TriangleCount, Vertices = mb.VertexCount,
             MeshVertices = mb.Vertices, MeshIndices = mb.Indices
         };
+        character.InitMove();
+        return character;
     }
 
     // --------------------------------------------------------------- skeleton

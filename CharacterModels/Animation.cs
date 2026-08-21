@@ -73,6 +73,9 @@ public readonly struct PoseWriter
 
     public void Root(Vector3 offset) => _pose.RootOffset = offset;
 
+    /// <summary>Blends the pose written so far toward another pose (t = 1 replaces it).</summary>
+    public void BlendToward(Pose other, float t) => _pose.BlendFrom(_pose, other, t);
+
     /// <summary>Character-space matrix of a bone under the pose written so far.</summary>
     public Matrix WorldOf(int index)
     {
@@ -150,7 +153,7 @@ public sealed class AnimationPlayer
     private float _blend = 1f, _time, _prevTime;
     private bool _primed;
     public float BlendDuration = 0.4f;
-    public float Damping = 0.72f;
+    public float Damping = 0.82f;
     public float TimeOffset;
     public Clip? Current => _current;
     /// <summary>Time into the current clip (one-shots start at 0).</summary>
@@ -171,8 +174,7 @@ public sealed class AnimationPlayer
                       : n.StartsWith("arm") ? MathHelper.TwoPi * 8.5f
                       : n == "head" ? MathHelper.TwoPi * 5f
                       : n == "neck" ? MathHelper.TwoPi * 7f
-                      : n.StartsWith("clav") || n == "chest" || n == "spine" ? MathHelper.TwoPi * 9f
-                      : 0f;
+                      : 0f;   // trunk, pelvis and legs are never sprung: a lagging spine reads as wobble
         }
     }
 
@@ -294,8 +296,8 @@ public static class Clips
     // Joint curves modelled on human gait data (heel strike at 0, loading response, mid-stance, push-off ~0.6, swing).
     public static readonly Gait WalkGait = new()
     {
-        Hz = 1.25f, Speed = 1.5f, Lean = 2f, Bob = 0.022f, Sway = 0.012f, Flight = 0,
-        ArmSwing = 18f, ElbowBase = 12f, ElbowSwing = 14f, PelvisYaw = 5f, PelvisDrop = 4f, ShoulderYaw = 6f,
+        Hz = 1.25f, Speed = 1.5f, Lean = 2f, Bob = 0.018f, Sway = 0.005f, Flight = 0,
+        ArmSwing = 18f, ElbowBase = 12f, ElbowSwing = 14f, PelvisYaw = 4f, PelvisDrop = 2.5f, ShoulderYaw = 5f,
         Hip = new[] { (0f, 24f), (0.12f, 20f), (0.3f, 6f), (0.5f, -11f), (0.62f, -9f), (0.75f, 8f), (0.88f, 21f), (1f, 24f) },
         Knee = new[] { (0f, 6f), (0.12f, 18f), (0.3f, 8f), (0.45f, 9f), (0.55f, 32f), (0.68f, 62f), (0.8f, 44f), (0.9f, 14f), (1f, 6f) },
         Ankle = new[] { (0f, 3f), (0.08f, -5f), (0.3f, 5f), (0.45f, 9f), (0.56f, -14f), (0.66f, -8f), (0.82f, 4f), (1f, 3f) },
@@ -304,45 +306,63 @@ public static class Clips
 
     public static readonly Gait RunGait = new()
     {
-        Hz = 2.2f, Speed = 4.4f, Lean = 11f, Bob = 0.05f, Sway = 0.01f, Flight = 0.035f,
-        ArmSwing = 42f, ElbowBase = 80f, ElbowSwing = 25f, PelvisYaw = 7f, PelvisDrop = 5f, ShoulderYaw = 9f,
+        Hz = 2.2f, Speed = 4.4f, Lean = 10f, Bob = 0.04f, Sway = 0.004f, Flight = 0.03f,
+        ArmSwing = 40f, ElbowBase = 80f, ElbowSwing = 25f, PelvisYaw = 5f, PelvisDrop = 3f, ShoulderYaw = 7f,
         Hip = new[] { (0f, 34f), (0.15f, 26f), (0.35f, 2f), (0.5f, -17f), (0.6f, -9f), (0.75f, 22f), (0.9f, 34f), (1f, 34f) },
         Knee = new[] { (0f, 22f), (0.12f, 42f), (0.3f, 24f), (0.45f, 38f), (0.6f, 92f), (0.72f, 108f), (0.85f, 62f), (1f, 22f) },
         Ankle = new[] { (0f, 0f), (0.1f, -6f), (0.3f, 9f), (0.42f, 13f), (0.52f, -24f), (0.62f, -14f), (0.8f, 2f), (1f, 0f) },
         Toe = new[] { (0f, 0f), (0.35f, 8f), (0.5f, 38f), (0.6f, 18f), (0.7f, 0f), (1f, 0f) }
     };
 
-    public static readonly Clip Walk = new("Walk", (t, w) => Locomotion(t, w, WalkGait));
-    public static readonly Clip Run = new("Run", (t, w) => Locomotion(t, w, RunGait));
+    public static readonly Clip Walk = new("Walk", (t, w) => Locomotion(t * WalkGait.Hz, w, WalkGait, WalkGait, 0));
+    public static readonly Clip Run = new("Run", (t, w) => Locomotion(t * RunGait.Hz, w, RunGait, RunGait, 0));
 
-    private static void Locomotion(float t, PoseWriter w, Gait g)
+    /// <summary>Stride frequency for a ground speed (m/s, at Height 1.8): stride length grows with speed, so Hz grows sub-linearly.</summary>
+    public static float StrideHz(float speed)
     {
-        float u = t * g.Hz;                     // stride phase, left heel strike at 0
+        float r = Smooth01((speed - WalkGait.Speed) / (RunGait.Speed - WalkGait.Speed));
+        float strideLen = MathHelper.Lerp(WalkGait.Speed / WalkGait.Hz, RunGait.Speed / RunGait.Hz, r);
+        // Below walking pace the stride shortens too (stroll), so the feet still do not slide.
+        if (speed < WalkGait.Speed) strideLen *= MathHelper.Lerp(0.6f, 1f, speed / WalkGait.Speed);
+        return MathHelper.Clamp(speed / strideLen, 0.5f, 3.5f);
+    }
+
+    /// <summary>
+    /// One stride of a gait blended between two gait definitions (r = 0 -> a, 1 -> b). u is the stride phase in cycles
+    /// (left heel strike at 0); callers that change speed must integrate the phase themselves so it never jumps.
+    /// </summary>
+    public static void Locomotion(float u, PoseWriter w, Gait a, Gait b, float r)
+    {
         u -= MathF.Floor(u);
         float c1 = MathF.Cos(MathHelper.TwoPi * u), s1 = MathF.Sin(MathHelper.TwoPi * u);
         float c2 = MathF.Cos(2 * MathHelper.TwoPi * u);
+        float Mix(float x, float y) => MathHelper.Lerp(x, y, r);
+        float lean = Mix(a.Lean, b.Lean), bob = Mix(a.Bob, b.Bob), sway = Mix(a.Sway, b.Sway), flight = Mix(a.Flight, b.Flight);
+        float armSwing = Mix(a.ArmSwing, b.ArmSwing), elbowBase = Mix(a.ElbowBase, b.ElbowBase), elbowSwing = Mix(a.ElbowSwing, b.ElbowSwing);
+        float pelvisYaw = Mix(a.PelvisYaw, b.PelvisYaw), pelvisDrop = Mix(a.PelvisDrop, b.PelvisDrop), shoulderYaw = Mix(a.ShoulderYaw, b.ShoulderYaw);
 
-        // Root: lowest at double support, highest at mid-stance; sway over the stance foot; flight adds lift.
-        w.Root(new Vector3(g.Sway * s1, -0.5f * g.Bob * c2 + g.Flight * Pos(-c2, 0.3f), 0));
-        // Pelvis and trunk counter-rotation, head kept level.
-        w.Upright("hips", 0, -g.PelvisDrop * s1, -g.PelvisYaw * c1);
-        w.Upright("spine", g.Lean * 0.45f, 1.5f * s1, g.ShoulderYaw * 0.45f * c1 + g.PelvisYaw * 0.5f * c1);
-        w.Upright("chest", g.Lean * 0.45f, -0.5f * s1, g.ShoulderYaw * 0.55f * c1 + g.PelvisYaw * 0.5f * c1);
-        w.Upright("neck", -g.Lean * 0.4f, 0, -g.ShoulderYaw * 0.4f * c1);
-        w.Upright("head", -g.Lean * 0.35f + 0.8f * c2, 0, -g.ShoulderYaw * 0.4f * c1);
+        // Root: lowest at double support, highest at mid-stance; a hint of sway over the stance foot; flight adds lift.
+        w.Root(new Vector3(sway * s1, -0.5f * bob * c2 + flight * Pos(-c2, 0.3f), 0));
+        // Pelvis and trunk counter-rotation; the head stays level and steady.
+        w.Upright("hips", 0, -pelvisDrop * s1, -pelvisYaw * c1);
+        w.Upright("spine", lean * 0.45f, 0.6f * s1, shoulderYaw * 0.45f * c1 + pelvisYaw * 0.5f * c1);
+        w.Upright("chest", lean * 0.45f, -0.3f * s1, shoulderYaw * 0.55f * c1 + pelvisYaw * 0.5f * c1);
+        w.Upright("neck", -lean * 0.4f, 0, -shoulderYaw * 0.4f * c1);
+        w.Upright("head", -lean * 0.35f + 0.5f * c2, 0, -shoulderYaw * 0.4f * c1);
 
         for (int side = -1; side <= 1; side += 2)
         {
             string L = side > 0 ? "L" : "R";
             float p = side > 0 ? u : u + 0.5f;
-            float hip = Key(p, g.Hip), knee = Key(p, g.Knee), ankle = Key(p, g.Ankle), toe = Key(p, g.Toe);
-            w.Hang("thigh" + L, hip + g.Lean * 0.3f, 2.5f, side);
+            float hip = Mix(Key(p, a.Hip), Key(p, b.Hip)), knee = Mix(Key(p, a.Knee), Key(p, b.Knee));
+            float ankle = Mix(Key(p, a.Ankle), Key(p, b.Ankle)), toe = Mix(Key(p, a.Toe), Key(p, b.Toe));
+            w.Hang("thigh" + L, hip + lean * 0.3f, 2.5f, side);
             w.Hang("shin" + L, -knee, 0, side);
             w.Foot("foot" + L, ankle, side, 0, toe);
 
             // Arms swing opposite the same-side leg; the elbow bends more on the forward swing.
-            float armF = -(hip - 6f) * g.ArmSwing / 24f;
-            float elbow = g.ElbowBase + g.ElbowSwing * Pos(armF / g.ArmSwing, 0.4f);
+            float armF = -(hip - 6f) * armSwing / 24f;
+            float elbow = elbowBase + elbowSwing * Pos(armF / armSwing, 0.4f);
             w.Hang("arm" + L, armF, 6f, side);
             w.Hang("fore" + L, elbow, 3f, side);
             w.Hang("hand" + L, -4f, 0, side);

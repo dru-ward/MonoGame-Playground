@@ -60,6 +60,7 @@ public class Game1 : Game
     private KeyboardState _prevKeys;
     private MouseState _prevMouse;
     private float _time;
+    private float _wobMinX = 9, _wobMaxX = -9, _wobMinZ = 9, _wobMaxZ = -9;
     private readonly Vector3 _fogColorLinear = new(0.045f, 0.05f, 0.07f);
 
     public Game1()
@@ -151,13 +152,19 @@ public class Game1 : Game
                 Tree? nearest = null; float best = float.MaxValue;
                 foreach (var tr in _trees) { float d = Vector3.DistanceSquared(tr.Position, pc.Position); if (d < best) { best = d; nearest = tr; } }
                 var dir = Vector3.Normalize(nearest!.Position - pc.Position);
-                _moveVel = dir * RunSpeed;
+                float ws = Program.Opt("walk", RunSpeed); if (ws <= 1) ws = RunSpeed;
+                _moveVel = dir * ws;
+                pc.Speed = ws; pc.Locomotion = pc.Move;
                 pc.Position += _moveVel / 60f;
                 ResolveCollisions(pc);
                 pc.Yaw = MathF.Atan2(dir.X, dir.Z);
                 _camTarget = _camTargetGoal = pc.Position + new Vector3(0, pc.Spec.Height * 0.55f, 0);
+                // Wobble metric: head offset from the hips in the character's own frame (x = lateral, z = forward), after t > 1 s.
+                var hips = pc.Skeleton["hips"].World.Translation; var head = pc.Skeleton["head"].World.Translation;
+                var rel = Vector3.TransformNormal(head - hips, Matrix.CreateRotationY(-pc.Yaw));
+                if (t > 1f) { _wobMinX = MathF.Min(_wobMinX, rel.X); _wobMaxX = MathF.Max(_wobMaxX, rel.X); _wobMinZ = MathF.Min(_wobMinZ, rel.Z); _wobMaxZ = MathF.Max(_wobMaxZ, rel.Z); }
                 if (t + 1f / 60f >= warm)
-                    Console.Error.WriteLine($"walk test: distance to tree {MathF.Sqrt(Vector3.DistanceSquared(nearest.Position, pc.Position)):0.000} (trunk r {nearest.Radius:0.000} + 0.28)");
+                    Console.Error.WriteLine($"walk test: distance to tree {MathF.Sqrt(Vector3.DistanceSquared(nearest.Position, pc.Position)):0.000} (trunk r {nearest.Radius:0.000} + 0.28)   head sway lateral {(_wobMaxX - _wobMinX) * 100:0.0} cm  fore/aft {(_wobMaxZ - _wobMinZ) * 100:0.0} cm");
             }
         }
         foreach (var t in _trees) t.Update(_time, _wind);
@@ -313,6 +320,7 @@ public class Game1 : Game
         if (Pressed(Keys.F) || Pressed(Keys.Tab))
         {
             int next = (_focus + 2) % (_characters.Count + 1) - 1;
+            if (_focus >= 0) { _characters[_focus].Speed = 0; _characters[_focus].Locomotion = Clips.Idle; }
             _focus = next; _moveVel = Vector3.Zero;
             if (_focus < 0) { _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; }
             else { var c = _characters[_focus]; _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0); _camDistGoal = 2.6f; }
@@ -366,7 +374,7 @@ public class Game1 : Game
         var fwd = new Vector3(-MathF.Sin(_camYaw), 0, -MathF.Cos(_camYaw));
         var right = new Vector3(-fwd.Z, 0, fwd.X);
         var input = Vector3.Zero;
-        if (keys.IsKeyDown(Keys.W)) input += fwd;
+        if (keys.IsKeyDown(Keys.W) || Program.Flag("walk")) input += fwd;   // --walk: headless test holds W + Shift
         if (keys.IsKeyDown(Keys.S)) input -= fwd;
         if (keys.IsKeyDown(Keys.D)) input += right;
         if (keys.IsKeyDown(Keys.A)) input -= right;
@@ -383,25 +391,29 @@ public class Game1 : Game
         if (Pressed(Keys.H)) c.ToggleWeapon();
         if (moving && c.Action != null && c.Action.Name != "Draw") c.CancelAction();
 
-        bool run = keys.IsKeyDown(Keys.LeftShift) || keys.IsKeyDown(Keys.RightShift);
-        var targetVel = moving ? input * (run ? RunSpeed : WalkSpeed) : Vector3.Zero;
+        bool run = keys.IsKeyDown(Keys.LeftShift) || keys.IsKeyDown(Keys.RightShift) || Program.Flag("walk");
+        float walkOpt = Program.Opt("walk", 0);
+        var targetVel = moving ? input * (walkOpt > 1 ? walkOpt : run ? RunSpeed : WalkSpeed) : Vector3.Zero;
         float accel = moving ? 7f : 10f;
         _moveVel = Vector3.Lerp(_moveVel, targetVel, 1 - MathF.Exp(-dt * accel));
         float speed = _moveVel.Length();
 
-        if (speed > 0.05f)
+        if (moving)
         {
-            float targetYaw = MathF.Atan2(_moveVel.X, _moveVel.Z);
+            // Turn toward the input direction (not the smoothed velocity, which lags and makes the body hunt).
+            float targetYaw = MathF.Atan2(input.X, input.Z);
             float delta = MathHelper.WrapAngle(targetYaw - c.Yaw);
-            c.Yaw += delta * (1 - MathF.Exp(-dt * 12f));
+            float maxTurn = MathHelper.ToRadians(540f) * dt;
+            c.Yaw += MathHelper.Clamp(delta * (1 - MathF.Exp(-dt * 9f)), -maxTurn, maxTurn);
         }
         c.Position += _moveVel * dt;
         ResolveCollisions(c);
         c.Position.X = MathHelper.Clamp(c.Position.X, -13f, 13f);
         c.Position.Z = MathHelper.Clamp(c.Position.Z, -13f, 13f);
 
-        // Clip from state: actions play until cancelled by movement or another action.
-        c.Locomotion = speed > (WalkSpeed + RunSpeed) * 0.5f ? Clips.Run : speed > 0.2f ? Clips.Walk : Clips.Idle;
+        // Speed-driven locomotion: one clip, one stride phase; no idle/walk/run cross-fades.
+        c.Speed = speed;
+        c.Locomotion = c.Move;
 
         // Camera follows.
         _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0);
@@ -441,7 +453,7 @@ public class Game1 : Game
         {
             var clip = _varied ? Clips.All[1 + (i + 1) % (Clips.All.Count - 1)] : Clips.All[_clipIndex];
             var c = _characters[i];
-            c.CancelAction();
+            c.CancelAction(); c.Speed = 0;
             if (clip.Duration > 0) { c.Locomotion = Clips.Idle; c.PlayAction(clip); if (clip == Clips.Attack) { c.Drawn = true; } }
             else c.Locomotion = clip;
         }

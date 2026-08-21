@@ -110,3 +110,26 @@ IK got them right first time once the target was placed correctly.
 Screenshots at several phases (`--warm 0.55/0.9/1.4`) from the side and 3/4 are enough to catch wrong signs,
 hyper-extended joints and sliding; the first hand-authored wave and elbow-sign bug were both obvious in a single
 frame. Verify each clip at least once from the side view where joint angles are unambiguous.
+
+## Speed-driven locomotion (fixes "wobbles back and forth when moving")
+Discrete Idle/Walk/Run clips selected by speed thresholds and cross-faded look fine in a demo but wobble under
+player control: walk (1.25 Hz) and run (2.2 Hz) have different stride frequencies, so every cross-fade slerps
+two out-of-phase cycles, and a smoothed velocity hovering near a threshold re-triggers the fade. Trunk springs
+(spine/chest/clavicles with 9 Hz follow-through) then overshoot the counter-rotation every stride.
+
+What fixed it:
+* **One Move clip per character** parameterised by `Speed` (m/s, normalised by `Height / 1.8`):
+  `amp = Smooth01(speed / 0.7)` blends Idle → gait, `r = Smooth01((speed − walkSpeed) / (runSpeed − walkSpeed))`
+  blends the walk and run **gait definitions** (scalars lerped, joint curves evaluated in both tables and lerped)
+  — never two clips at different phases.
+* **One integrated stride phase**: `phase += dt × StrideHz(speed)` where `Hz = speed / strideLen`,
+  `strideLen = lerp(1.2 m, 2.0 m, r)` (× 0.6…1 below walking pace), clamped 0.5–3.5 Hz. Feet stay planted at
+  every speed and the cycle never jumps. When stopped, ease the phase to the nearest double-support (`round(phase·2)/2`).
+* The Idle evaluation is written first, then `PoseWriter.BlendToward(locoPose, amp)` — a one-line pose blend.
+* Springs only on arms, hands, head and neck (damping 0.82); trunk, pelvis and legs crisp.
+* Gait tuning for a steady torso: sway 0.5 cm (was 1.2), pelvis drop 2.5° (was 4), spine tilt 0.6° (was 1.5),
+  head pitch bob 0.5°. Measured head-vs-hips excursion over a run: lateral ~5 cm, fore/aft < 1 cm.
+* Turn toward the **input** direction, not the smoothed velocity (which lags and makes the body hunt), with a
+  9/s exponential approach capped at 540°/s.
+* MonoGame fixed-step catch-up after a long load runs many `Update`s before the first `Draw`; headless tests
+  that "hold a key" must assert it inside `Update`, not only in a warm-up loop, or the screenshot shows idle.
