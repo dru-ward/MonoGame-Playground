@@ -21,11 +21,13 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 |---|---|
 | `1`–`7` | Animation for everyone: bind pose, idle, walk, run, wave, attack, dance |
 | `V` | "Varied" — each character plays a different clip |
-| `F` / `Tab` | Focus camera on the next character (cycles back to the full line-up) |
+| `F` / `Tab` | Focus the next character **and take control of it** (cycles back to the overview) |
+| `W A S D` | Move the controlled character (camera-relative) · hold `Shift` to run |
+| `Q` / `E` / `X` | Attack / wave / dance (cancelled by moving) |
 | Mouse drag / arrows | Orbit camera · right-drag pans · wheel zooms |
 | `Space` | Toggle auto-orbit turntable |
 | `L` / `K` | Rotate the key light |
-| `W` | Wireframe |
+| `G` | Wireframe |
 | `R` | Reset camera |
 
 ### Command-line options
@@ -51,9 +53,9 @@ opens in Blender).
 | `MeshBuilder.cs` | Procedural geometry: **lofts** (tubes through elliptical rings with parallel-transport frames and hemispherical caps), shaped **ellipsoids** (per-direction radius function — used for skulls, jaws, hair, hoods, helmets), and flat-shaded **boxes**. Smooth area-weighted normals per part. |
 | `Weighter` (in `MeshBuilder.cs`) | Automatic skin weighting: each vertex is weighted by inverse-power distance to the bone segments of the part's allowed bones, top 4 kept and normalised. This gives smooth elbows/knees/shoulders without hand-painting. |
 | `Character.cs` | `CharacterSpec` (proportions, palette, gear flags) → `CharacterBuilder` builds the 19-bone rig and ~10k-triangle body: torso/robe, neck, shaped head with eyes/iris/pupil/brows/nose/mouth/ears, hair styles, beard, mitten hands with thumbs, legs, boots, belt, pauldrons, quiver + arrows, shield, sword, daggers, axe, staff with orb, bow. `Roster` defines the five archetypes. |
-| `Animation.cs` | `Pose` / `PoseWriter` hide the axis conventions ("swing this limb forward 30°"). `Clips` are procedural functions of time (idle breathing, walk/run locomotion cycles with knee flexion, heel strike and arm counter-swing, wave, key-framed sword attack, dance). `AnimationPlayer` cross-fades between clips with slerp. |
+| `Animation.cs` | `Pose` / `PoseWriter` hide the axis conventions ("swing this limb forward 30°", twist about the bone's own axis). `Clips` are procedural functions of time (idle breathing, walk/run cycles with knee flexion, heel strike and arm counter-swing, wave, key-framed sword attack, dance) built from C1-smooth curves and cyclic Catmull-Rom keyframes. `AnimationPlayer` cross-fades with slerp + smootherstep and then runs every upper-body bone through a damped second-order spring, so hands/head lag and settle (follow-through / overlapping action) instead of snapping. |
 | `Content/Character.fx` | HLSL (compiled to GLSL by MGCB): 4-bone GPU skinning, wrap-diffuse key light, hemisphere ambient, fill light, Blinn-Phong specular with Fresnel boost (per-vertex material = specular strength + shininess), rim light, 3×3 PCF shadow map, object-space procedural grain, fog, exposure tone-mapping + gamma. A second technique renders the shadow map. |
-| `Game1.cs` | Scene, orbit camera, shadow pass (2048² R32F), floor, HUD and labels, startup options. |
+| `Game1.cs` | Scene, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
 
 ### Making a new character
 

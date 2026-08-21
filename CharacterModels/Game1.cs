@@ -37,6 +37,11 @@ public class Game1 : Game
 
     private RenderTarget2D? _shotTarget;
     private int _frame;
+    // Play mode (focused character is player-controlled)
+    private Vector3 _moveVel;
+    private Clip? _action;
+    private const float WalkSpeed = 1.6f, RunSpeed = 4.4f;
+
     private KeyboardState _prevKeys;
     private MouseState _prevMouse;
     private float _time;
@@ -176,18 +181,18 @@ public class Game1 : Game
 
         if (keys.IsKeyDown(Keys.Escape)) Exit();
         if (Pressed(Keys.Space)) _autoOrbit = !_autoOrbit;
-        if (Pressed(Keys.W)) _wireframe = !_wireframe;
+        if (Pressed(Keys.G)) _wireframe = !_wireframe;
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
         if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
         if (Pressed(Keys.F) || Pressed(Keys.Tab))
         {
             int next = (_focus + 2) % (_characters.Count + 1) - 1;
-            _focus = next;
+            _focus = next; _moveVel = Vector3.Zero; _action = null;
             if (_focus < 0) { _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; }
             else { var c = _characters[_focus]; _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0); _camDistGoal = 2.6f; }
         }
         for (int i = 0; i < Clips.All.Count && i < 9; i++)
-            if (Pressed(Keys.D1 + i)) { _clipIndex = i; _varied = false; ApplyClips(); }
+            if (Pressed(Keys.D1 + i)) { _clipIndex = i; _varied = false; _action = null; ApplyClips(); }
         if (keys.IsKeyDown(Keys.L)) _lightYaw += dt * 1.2f;
         if (keys.IsKeyDown(Keys.K)) _lightYaw -= dt * 1.2f;
 
@@ -216,10 +221,58 @@ public class Game1 : Game
         _camDist = MathHelper.Lerp(_camDist, _camDistGoal, 1 - MathF.Exp(-dt * 6));
         _camTarget = Vector3.Lerp(_camTarget, _camTargetGoal, 1 - MathF.Exp(-dt * 6));
 
+        if (_focus >= 0) UpdatePlayer(dt, keys);
         foreach (var c in _characters) c.Player.Update(dt);
 
         _prevKeys = keys; _prevMouse = mouse;
         base.Update(gameTime);
+    }
+
+    /// <summary>Third-person control of the focused character: camera-relative WASD, Shift to run, Q/E/X actions.</summary>
+    private void UpdatePlayer(float dt, KeyboardState keys)
+    {
+        var c = _characters[_focus];
+        bool Pressed(Keys k) => keys.IsKeyDown(k) && !_prevKeys.IsKeyDown(k);
+
+        // Camera-relative movement basis on the ground plane.
+        var fwd = new Vector3(-MathF.Sin(_camYaw), 0, -MathF.Cos(_camYaw));
+        var right = new Vector3(-fwd.Z, 0, fwd.X);
+        var input = Vector3.Zero;
+        if (keys.IsKeyDown(Keys.W)) input += fwd;
+        if (keys.IsKeyDown(Keys.S)) input -= fwd;
+        if (keys.IsKeyDown(Keys.D)) input += right;
+        if (keys.IsKeyDown(Keys.A)) input -= right;
+        bool moving = input.LengthSquared() > 0.01f;
+        if (moving) input.Normalize();
+
+        if (Pressed(Keys.Q)) _action = Clips.Attack;
+        if (Pressed(Keys.E)) _action = Clips.Wave;
+        if (Pressed(Keys.X)) _action = Clips.Dance;
+        if (moving) _action = null;
+
+        bool run = keys.IsKeyDown(Keys.LeftShift) || keys.IsKeyDown(Keys.RightShift);
+        var targetVel = moving ? input * (run ? RunSpeed : WalkSpeed) : Vector3.Zero;
+        float accel = moving ? 7f : 10f;
+        _moveVel = Vector3.Lerp(_moveVel, targetVel, 1 - MathF.Exp(-dt * accel));
+        float speed = _moveVel.Length();
+
+        if (speed > 0.05f)
+        {
+            float targetYaw = MathF.Atan2(_moveVel.X, _moveVel.Z);
+            float delta = MathHelper.WrapAngle(targetYaw - c.Yaw);
+            c.Yaw += delta * (1 - MathF.Exp(-dt * 12f));
+        }
+        c.Position += _moveVel * dt;
+        c.Position.X = MathHelper.Clamp(c.Position.X, -13f, 13f);
+        c.Position.Z = MathHelper.Clamp(c.Position.Z, -13f, 13f);
+
+        // Clip from state: actions play until cancelled by movement or another action.
+        Clip clip = _action ?? (speed > (WalkSpeed + RunSpeed) * 0.5f ? Clips.Run : speed > 0.2f ? Clips.Walk : Clips.Idle);
+        c.Player.Play(clip);
+
+        // Camera follows.
+        _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0);
+        _autoOrbit = false;
     }
 
     private void ApplyClips()
@@ -366,13 +419,20 @@ public class Game1 : Game
         string clipName = _varied ? "varied" : Clips.All[_clipIndex].Name;
         Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}", new Vector2(16, 62), new Color(255, 220, 150));
 
-        var lines = new[]
-        {
-            "1-7  animation (bind, idle, walk, run, wave, attack, dance)",
-            "V    varied animations     F / Tab  focus next character",
-            "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-            "Space auto-orbit   L/K rotate light   W wireframe   R reset   Esc quit"
-        };
+        var lines = _focus >= 0
+            ? new[]
+            {
+                $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   Q attack   E wave   X dance",
+                "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
+                "1-7 animation   L/K rotate light   G wireframe   R reset   Esc quit"
+            }
+            : new[]
+            {
+                "F / Tab  focus a character and take control of it (WASD + Shift)",
+                "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
+                "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
+                "Space auto-orbit   L/K rotate light   G wireframe   R reset   Esc quit"
+            };
         float y = gd.Viewport.Height - 16 - lines.Length * 20;
         foreach (var l in lines) { Text(l, new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }
 
