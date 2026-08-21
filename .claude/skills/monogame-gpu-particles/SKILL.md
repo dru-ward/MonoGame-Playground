@@ -1,6 +1,6 @@
 ---
 name: monogame-gpu-particles
-description: High-throughput 2D particle system in MonoGame using a pooled struct array streamed to a DynamicVertexBuffer of VertexPositionColorTexture with a static IndexBuffer and a single DrawIndexedPrimitives call (BasicEffect, additive blend, world/view/ortho projection). Use when SpriteBatch particles are too slow or when demonstrating vertex buffers.
+description: High-throughput 2D particle system in MonoGame — a dense swap-remove pool of particle structs streamed each frame to a DynamicVertexBuffer of VertexPositionColorTexture (SetDataOptions.Discard) with a static 16-bit IndexBuffer and one DrawIndexedPrimitives call through BasicEffect with additive blend and a pixel-space orthographic projection matching SpriteBatch; includes emitter helpers (sparks, puffs, embers), transient per-frame quads for tracers, the premultiplied soft-circle texture, and the wireframe-toggle gotcha. Use when SpriteBatch particles are too slow, when particles must render into a post-processed scene target, or when demonstrating vertex buffers.
 ---
 
 # DynamicVertexBuffer particle system
@@ -64,7 +64,7 @@ foreach (var pass in _fx.CurrentTechnique.Passes) { pass.Apply(); gd.DrawIndexed
 gd.SetVertexBuffer(null); gd.Indices = null;
 ```
 
-## Current API (`Graphics/ParticleSystem.cs`)
+## Extended API (emitter helpers)
 ```csharp
 struct Particle { Vector2 Position, Velocity; float Age, Lifetime, Size, Rotation, Spin; Vector3 Color; float Aspect, Drag, Gravity; bool Emissive; }
 Emit(in Particle p);                                          // raw
@@ -75,11 +75,11 @@ AddQuad(pos, rotation, size, aspect, color);                  // TRANSIENT quad 
 Update(dt); BeginFrameVertices();  /* then AddQuad calls */  Draw(view, w, h, blendState, rasterizerState);
 ```
 Emissive particles fade with `sin(life*pi)` and shrink; non-emissive ("dust") are drawn at 55 % brightness and grow.
-Buffer holds `MaxParticles + 512` quads so transient tracers never evict particles.
+Size the buffer at `MaxParticles + 512` quads so transient tracers never evict particles (starting values).
 
 ## Notes
 - Particle texture: radial `a = smoothstep(1-d)²`, stored premultiplied `(a,a,a,a)`.
 - Wire-frame mode on additive soft quads shows only the bright diagonal ⇒ looks like "streaks". If particles suddenly look
   like thin lines, a wireframe toggle key was probably pressed (don't bind toggles to WASD).
-- Emitters attached to moving lights/players: colour = light colour; dust = dim tan `(0.36,0.30,0.22)`, short lifetime,
-  spawned behind the mover with `-normalize(velocity)`.
+- Emitters attached to moving lights/characters: colour = light colour; dust should be dim and desaturated with a short
+  lifetime, spawned behind the mover with `-normalize(velocity)`.

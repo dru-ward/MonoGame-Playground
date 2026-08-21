@@ -9,11 +9,29 @@ Small game projects, one folder per game.
 
 ## Shared skills (`.claude/skills/`)
 
-Game-agnostic methods distilled from the projects above:
+Game-agnostic methods distilled from the projects above (style, palette and balance specifics stay with each game —
+TopDownRaid keeps short stubs under `TopDownRaid/.claude/skills/` that point back here).
 
 | Skill | Covers |
 |---|---|
-| `monogame-procedural-skinned-mesh` | Custom skinned vertex type, axis-aligned bind skeleton + palette, loft/ellipsoid/box primitives, winding/normals, automatic bone weighting, sockets via bind rotations, OBJ export |
-| `monogame-skinning-shader` | HLSL palette skinning, wrap/hemisphere/Blinn-Phong/rim lighting from per-vertex materials, PCF shadow map, grain, tone mapping, DesktopGL pipeline gotchas |
-| `monogame-procedural-animation` | Pose/clip model, gait tables for walk/run, Catmull-Rom keys, spring follow-through, two-bone arm IK, action state machine, weapon draw/sheathe, third-person control |
-| `monogame-headless-screenshots` | Deterministic offscreen captures via startup options for agent-driven visual iteration |
+| `monogame-project-setup` | Scaffold/build a 3.8.x DesktopGL project, MGCB content, headless verification |
+| `monogame-game-architecture` | Folder layout, records vs instances, context bag, update order, render callbacks |
+| `monogame-hlsl-effects` | Writing and loading custom effects, DX/GL profile guards, parameter gotchas |
+| `monogame-procedural-textures` | Runtime textures: tiling noise, Sobel normal maps, mips, premultiplied sprites |
+| `monogame-deferred-2d-lighting` | Albedo+normal G-buffer, normal-mapped point lights, bloom, composite |
+| `monogame-grunge-visuals` | Worn-surface height fields, grime multipliers, flicker lights, colour-grade post |
+| `monogame-outdoor-daylight-map` | Bright maps on an ambient-multiplied pipeline, grass tiles, canopy props |
+| `monogame-gpu-particles` | Pooled particle simulation and quad building |
+| `monogame-hud-pixel-font` | Procedural pixel font, HUD layout and state handling |
+| `monogame-character-rig` | Layered top-down sprite rig with gait and arm-layer animation recipes |
+| `monogame-topdown-player` | Movement, circle-vs-AABB sliding, twin-stick aim, follow camera |
+| `monogame-projectiles-ricochet` | Weapon state machine, segment-cast bullets, ricochet, tracers |
+| `monogame-enemy-ai` | Data-driven enemies, state machine, kiting, sidestep steering, spawning |
+| `monogame-weapon-attachments-gear` | Attachment/gear records, spot-cone torch, laser, grenades, melee |
+| `monogame-inventory-loot` | Item registry, inventory API, loot tables, pickups |
+| `monogame-inventory-screen` | Drag/drop inventory and container-transfer UI with reliable hit-testing |
+| `monogame-raid-metagame` | Host state machine, persistent profile, level records, session outcomes |
+| `monogame-procedural-skinned-mesh` | Code-built skinned meshes: vertex type, skeleton, primitives, auto-weighting, OBJ export |
+| `monogame-skinning-shader` | HLSL palette skinning, stylised lighting, PCF shadows, tone mapping |
+| `monogame-procedural-animation` | Gait tables, Catmull-Rom keys, spring follow-through, 2-bone IK, weapon sockets |
+| `monogame-headless-screenshots` | Deterministic offscreen captures via startup options for visual iteration |

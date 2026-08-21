@@ -1,28 +1,14 @@
 ---
 name: monogame-topdown-player
-description: Add a controllable top-down human player to a MonoGame game — WASD movement with acceleration/friction, sprint, circle-vs-AABB collision with sliding, twin-stick mouse aiming, auto-fire rifle with tracer bullets (sub-stepped crate hits, sparks, muzzle flash light, recoil), a procedural shape-list human sprite with matching normal map, a SpriteBatch pixel shader that rotates normals with the sprite, and a smoothed follow camera with wheel zoom. Use when a MonoGame project needs a movable/shooting character and follow camera.
+description: Add a controllable top-down character to a MonoGame game — WASD movement with acceleration/friction and frame-rate-independent damping, sprint, circle-vs-AABB collision with sliding and least-penetration ejection, twin-stick mouse aiming with separate aim/move facing and anti-phase foot stride, a trigger lockout so UI clicks never fire the weapon, muzzle position from a sprite-local offset with recoil, a smoothed look-ahead follow camera with wheel zoom clamped to the world, a shape-list sprite rasterised to matching albedo + Sobel normal map, and a SpriteBatch pixel shader that rotates normals with the sprite. Use when a MonoGame project needs a movable/aiming/shooting character and follow camera.
 ---
 
 # Top-down player + follow camera
 
-> Visuals: the character is now a 5-layer rig (shadow/boots/torso/arms+weapon/head) with outlines and arm-layer
-> animation — see **monogame-character-rig**. This skill covers movement/aim/collision/camera.
-> Current implementation: `Entities/Character.cs` (base) + `Entities/Player.cs`; weapons in `Combat/Weapon.cs`
-> (see monogame-projectiles-ricochet), inventory/loot in `Items/` (monogame-inventory-loot). Key evolutions since
-> the first version:
-> - **Aim facing != move facing**: `Facing` follows the mouse (twin-stick), `MoveFacing` lerps to the velocity; the body
->   is drawn rotated to `Facing`, two **boots** are drawn under it rotated to `MoveFacing`, offset +/-9 px sideways and
->   sliding +/-7 px fore/aft in anti-phase with `StridePhase += dt * Speed / 26` (one stride per 26 px). Boots use
->   `rotateNormals:false` (tiny relief) so they cost no batch flush.
-> - Movement uses `MathUtil.Approach(Velocity, wanted, Accel*dt)` and `world.ResolveCircle(ref pos, ref vel, r)`.
-> - `Weapon` handles mag/reload/semi-auto; ammo reserve is the inventory; `MuzzleWorld()` = `LocalToWorld(CharacterArt.MuzzleLocal(held) - recoil)`.
-> - Armor absorbs 60 % of damage; death -> 3 s respawn (`RespawnTimer`), enemies `ResetAggro()`.
-> - Debug/UI keys are F-keys and Tab/E/Q/R/1-5 - nothing on WASD.
-
 ## Movement (per frame, `dt` seconds)
 ```csharp
-sealed class Player { public const float Radius=24, WalkSpeed=330, SprintSpeed=560, Accel=2600, Friction=9;
-                      public Vector2 Position, Velocity; public float Facing, BobTime; public bool IsSprinting; }
+sealed class Player { public const float Radius=24, WalkSpeed=330, SprintSpeed=560, Accel=2600, Friction=9;   // starting values
+                      public Vector2 Position, Velocity; public float Facing, MoveFacing, StridePhase, BobTime; public bool IsSprinting; }
 
 var k = Keyboard.GetState(); var input = Vector2.Zero;
 if (k.IsKeyDown(Keys.W) || k.IsKeyDown(Keys.Up))    input.Y -= 1;   // screen y is down
@@ -43,11 +29,17 @@ else { p.Velocity *= MathF.Exp(-Player.Friction * dt); if (p.Velocity.LengthSqua
 p.Position += p.Velocity * dt;
 ResolveCollisions();
 if (p.Velocity.LengthSquared() > 100)                                    // only turn while actually moving
-    p.Facing = LerpAngle(p.Facing, MathF.Atan2(p.Velocity.Y, p.Velocity.X), 1 - MathF.Exp(-14 * dt));
+    p.MoveFacing = LerpAngle(p.MoveFacing, MathF.Atan2(p.Velocity.Y, p.Velocity.X), 1 - MathF.Exp(-14 * dt));
 
 static float LerpAngle(float a, float b, float t) => a + MathHelper.WrapAngle(b - a) * t;
 ```
-`1 - exp(-k*dt)` lerp factors and `exp(-friction*dt)` damping are frame-rate independent.
+`1 - exp(-k*dt)` lerp factors and `exp(-friction*dt)` damping are frame-rate independent. The capped velocity step is a
+generic `Approach(current, wanted, maxStep)` helper worth factoring out.
+
+**Aim facing != move facing**: `Facing` follows the mouse (twin-stick, below), `MoveFacing` lerps to the velocity. The
+body is drawn rotated to `Facing`; feet are drawn under it rotated to `MoveFacing`, offset +/-9 px sideways and sliding
++/-7 px fore/aft in anti-phase with `StridePhase += dt * Speed / 26` (one stride per 26 px of travel). If feet use a
+flat/tiny-relief normal map they don't need the normal-rotation shader and cost no batch flush.
 
 ## Circle vs AABB collision with sliding
 ```csharp
@@ -73,7 +65,8 @@ foreach (var r in boxes)
 }
 p.Position = Vector2.Clamp(p.Position, new Vector2(Player.Radius), new Vector2(WorldSize - Player.Radius));
 ```
-Run `ResolveCollisions()` a few times at spawn so the player never starts inside a box.
+Run `ResolveCollisions()` a few times at spawn so the player never starts inside a box. Expose it as
+`world.ResolveCircle(ref pos, ref vel, r)` so enemies and other movers share it.
 
 ## Follow camera with look-ahead and wheel zoom
 ```csharp
@@ -88,21 +81,21 @@ _view = Matrix.CreateTranslation(-_cam.X, -_cam.Y, 0) * Matrix.CreateScale(_zoom
 // screen -> world (e.g. mouse): Vector2.Transform(screenPos, Matrix.Invert(_view))
 ```
 
-## Drawing (works with the normal-mapped G-buffer pipeline)
+## Drawing (works with a normal-mapped G-buffer pipeline)
 ```csharp
 float bob = 1 + 0.05f * MathF.Sin(p.BobTime * 2) * MathHelper.Clamp(p.Speed / Player.WalkSpeed, 0, 1);
 float scale = Player.Radius * 2.3f / tex.Width * bob;
 sb.Draw(normalPass ? playerNormal : playerAlbedo, p.Position, null, Color.White, p.Facing,
         new Vector2(tex.Width, tex.Height) * 0.5f, scale, SpriteEffects.None, 0);
 ```
-- Sprite art points +X at rotation 0 (a visor wedge makes heading readable). `Facing = Atan2(vy, vx)` matches SpriteBatch's
-  clockwise-on-screen rotation directly.
+- Sprite art points +X at rotation 0 (a readable "front" feature such as a visor wedge helps). `Facing = Atan2(vy, vx)`
+  matches SpriteBatch's clockwise-on-screen rotation directly.
 - Rotating a sprite breaks "tangent space == screen space" for normal maps **unless the normal map is radially symmetric**
-  (a dome) — then rotation is free. Otherwise you would need to rotate n.xy in a shader.
-- Attach a `PointLight { FollowPlayer = true }` (warm colour, radius ~430, height ~110) and emit dust particles behind the
-  player at a rate proportional to speed (`-normalize(velocity)` offset, 0.5–1 s lifetime).
+  (a dome) — then rotation is free. Otherwise rotate n.xy in a shader (below).
+- Attach a `PointLight { FollowPlayer = true }` (radius ~430, height ~110 as starting values) and emit dust particles behind
+  the player at a rate proportional to speed (`-normalize(velocity)` offset, 0.5–1 s lifetime).
 
-## Twin-stick aiming + auto-fire rifle
+## Twin-stick aiming + firing
 ```csharp
 // aim: body/gun face the cursor; movement stays on WASD
 var aimWorld = Vector2.Transform(new Vector2(mouse.X, mouse.Y), Matrix.Invert(_view));
@@ -110,28 +103,34 @@ var toAim = aimWorld - p.Position;
 if (toAim.LengthSquared() > 4) p.Facing = LerpAngle(p.Facing, MathF.Atan2(toAim.Y, toAim.X), 1 - MathF.Exp(-25 * dt));
 
 // weapon timers (all decay per frame): FireCooldown, Recoil (0..1), Flash (0..1)
-if (mouse.LeftButton == ButtonState.Pressed && p.FireCooldown <= 0) FireWeapon();   // FireInterval 0.11 s
+if (trigger && p.FireCooldown <= 0) FireWeapon();
+// trigger lockout: arm while any UI is open (and at spawn), release only once LMB is UP — otherwise the click
+// that closes an inventory/menu (or a "start" button) fires the gun on the very next frame:
+// if (uiOpen) locked = true; else if (!LeftDown) locked = false;  trigger = LeftDown && !locked && !uiOpen;
 
 // muzzle in world space from a sprite-local offset (+X forward, +Y right), includes recoil pull-back
 public Vector2 MuzzleWorld(float scale) { float c = Cos(Facing), s = Sin(Facing);
     var l = new Vector2(MuzzleOffset - Recoil * 6, MuzzleSide) * scale; return Position + new Vector2(l.X*c - l.Y*s, l.X*s + l.Y*c); }
 ```
-Bullets are particles with `IsBullet = true, Aspect = 5` (elongated quad along Rotation), speed ~1500 px/s, colour > 1 so
-they bloom. In the particle sim, sub-step so they never tunnel:
+Magazine/reload/semi-auto state, and proper segment-cast bullets with ricochet, are covered in monogame-projectiles-ricochet;
+the ammo reserve is simply the inventory. A minimal alternative is bullets as particles with `IsBullet = true, Aspect = 5`
+(elongated quad along Rotation), speed ~1500 px/s, colour > 1 so they bloom, sub-stepped so they never tunnel:
 ```csharp
 var step = p.Velocity * dt; int n = 1 + (int)(step.Length() / 12f); var sub = step / n;
-for (int k = 0; k < n; k++) { p.Position += sub; if (outOfWorld || anyCrate.Contains(p.Position)) { SpawnImpact(p.Position - sub, p.Velocity); kill; break; } }
+for (int k = 0; k < n; k++) { p.Position += sub; if (outOfWorld || anyBox.Contains(p.Position)) { SpawnImpact(p.Position - sub, p.Velocity); kill; break; } }
 ```
 Muzzle flash = a `PointLight` whose `Intensity = p.Flash * 2.5` (Flash set to 1 on fire, `-= 14*dt`); recoil kicks the
-sprite `-Facing * Recoil * 4px`. Sprint widens the random spread. Draw a screen-space crosshair with `_pixel` rectangles
-additively into the scene RT (unlit). Keep light count ≤ `MAX_LIGHTS` (orbit lights + lantern + muzzle).
+sprite `-Facing * Recoil * 4px`. Sprint widens the random spread. Draw a screen-space crosshair with pixel rectangles
+additively into the scene RT (unlit). Keep light count ≤ `MAX_LIGHTS` (scene lights + player light + muzzle).
+Damage mitigation (armor absorbing a fraction) and a respawn timer that resets enemy aggro are cheap to add here.
 
-## Human sprite from a shape list (albedo + normal map agree)
+## Character sprite from a shape list (albedo + normal map agree)
 Describe the character once as ordered shapes (ellipse / capsule / box) with colour, base height and "dome" amount, then
 rasterise twice: colour with painter's order and AA coverage; height field → Sobel normal map (`HeightToNormal`, strength
-~0.35 on ~8px relief). Order: feet, torso ellipse (wide across Y), strap, shoulders, rifle (stock/receiver/rail/mag/barrel),
-arms as capsules to grip + fore-end, hands, head (skin) then hair cap offset backwards, face patch forwards.
+~0.35 on ~8px relief). Order: feet, torso ellipse (wide across Y), strap, shoulders, weapon parts, arms as capsules to grip
+and fore-end, hands, head then hair cap offset backwards, face patch forwards.
 `ShapeCoverage()` returns AA coverage and a normalised radial `t` (0 centre..1 edge) used for `sqrt(1-t²)` domes.
+A layered rig (shadow/feet/torso/arms+weapon/head as separate sprites with arm-layer animation) is the natural next step.
 
 ## Rotating a detailed normal map with the sprite
 A rotated sprite's normal map stays in texture space. Use a **pixel-shader-only** technique with SpriteBatch (it keeps its
@@ -153,9 +152,9 @@ _effect.CurrentTechnique = _effect.Techniques["SpriteNormalRotate"];
 sb.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp, DepthStencilState.None, RasterizerState.CullNone, _effect, _view);
 sb.Draw(playerNormal, pos, null, Color.White, f, origin, scale, SpriteEffects.None, 0); sb.End();
 ```
-(Only needed in the normal pass; the albedo pass draws normally.)
+(Only needed in the normal pass; the albedo pass draws normally. Each parameter change forces a batch flush.)
 
 ## Input pitfalls
-- Never bind debug toggles to `W`/`S`/`A`/`D` — use F-keys.
+- Never bind debug toggles to `W`/`S`/`A`/`D` — use F-keys; keep UI keys (Tab/E/Q/R/number row) off the movement cluster.
 - Edge-detect toggles with a previous `KeyboardState` (`IsKeyDown(k) && !prev.IsKeyDown(k)`), read movement as held keys.
 - Disable/skip a mouse-driven light when `!IsActive` or the cursor is outside `Viewport.Bounds`.

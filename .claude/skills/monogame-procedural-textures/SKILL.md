@@ -68,7 +68,7 @@ data[i] = a <= 0 ? Color.Transparent : new Color(col.X*a, col.Y*a, col.Z*a, a);
 ```
 Radially symmetric dome normal (`n = normalize(dx/R*0.8, dy/R*0.8, sqrt(1-t²)*0.6+0.4)`) survives sprite rotation.
 
-## Shape-list sprites (`Graphics/ShapeSprite.cs`) - the workhorse for characters & icons
+## Shape-list sprites - the workhorse for top-down characters & item icons
 ```csharp
 var s = new ShapeSprite(96);                       // sprite-local: +X forward, +Y right, origin = centre
 s.Ellipse(cx, cy, rx, ry, color, height, dome=1, shade=.35);  s.Circle(...);  s.Capsule(x0,y0,x1,y1, r, color, height, dome);
@@ -77,8 +77,8 @@ var pair = new SpritePair(s.CreateAlbedo(gd), s.CreateNormal(gd, reliefPx: 8f, s
 ```
 Painter's order; AA coverage per shape (`Coverage()` returns cov 0..1 and radial t); albedo darkens toward each dome's
 rim (`1 - dome*shade*t`); the normal map is a height field (`Height * lerp(1, sqrt(1-t^2), Dome) * reliefPx`) run through
-`HeightToNormal`, both premultiplied by coverage so edges blend onto the floor. `CharacterArt` (bodies/boots/weapons via
-`CharacterStyle`) and `ItemArt` (28 px icons) are just shape lists.
+`HeightToNormal`, both premultiplied by coverage so edges blend onto the floor. Character sprites (bodies, boots, held
+items, parameterised by a style record) and small item icons (~28 px) are just shape lists built from the same primitives.
 
 ## Particle glow
 ```csharp

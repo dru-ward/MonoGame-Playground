@@ -83,8 +83,9 @@ Smoke test without a screenshot: `timeout 12 dotnet bin/Debug/net9.0/Game1.dll; 
 (no crash); `0` with an auto-screenshot means it exited cleanly.
 
 ## Beyond one file
-When the prototype grows, follow monogame-game-architecture (Core/Graphics/World/Entities/Combat/Items/UI folders,
-`GameContext`, pipeline callbacks). Extra headless knobs used there: `GAME1_SHOT_DELAY`, `GAME1_ZOOM`, `GAME1_BOT=1`.
+When the prototype grows, split into Core/Graphics/World/Entities/UI folders with a shared context object and pipeline
+callbacks. Useful extra headless knobs: a shot delay (`GAME1_SHOT_DELAY`), camera zoom (`GAME1_ZOOM`), and a bot/autopilot
+flag (`GAME1_BOT=1`) so the captured frame shows gameplay; see monogame-headless-screenshots.
 
 ## Gotchas
 - Bash heredocs containing large C# / Python bodies sometimes fail to parse in this harness ("unexpected EOF while looking for

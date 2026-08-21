@@ -1,6 +1,6 @@
 ---
 name: monogame-hlsl-effects
-description: Write and drive custom HLSL .fx effects in MonoGame DesktopGL (vs_3_0/ps_3_0 via MGCB) — multi-technique files, full-screen quads with pixel-space orthographic WVP, sampler/register conventions, parameter caching, and the runtime gotchas (initialisers ignored, RT/texture binding). Use when adding shaders, post-processing, or per-pixel lighting to MonoGame.
+description: Write and drive custom HLSL .fx effects in MonoGame DesktopGL (vs_3_0/ps_3_0 via MGCB) and DirectX — the cross-platform file skeleton, multi-technique files sharing one vertex shader, unrolled loops over uniform arrays, sampler/register conventions, full-screen quads with a pixel-space orthographic WVP, parameter caching from C#, and the runtime gotchas (HLSL initialisers ignored on OpenGL, render-target/texture binding order, sampler state). Includes bright-pass, separable Gaussian blur and vignette recipes. Use when adding shaders, post-processing or per-pixel lighting to any MonoGame project.
 ---
 
 # Custom HLSL effects in MonoGame (OpenGL profile)
@@ -53,7 +53,7 @@ float3 LightPositions[MAX_LIGHTS]; float3 LightColors[MAX_LIGHTS]; float2 LightR
 Cache parameters once, draw full-screen quads with pixel-space vertices and an orthographic WVP:
 
 ```csharp
-_effect = Content.Load<Effect>("Shaders/Deferred");
+_effect = Content.Load<Effect>("Shaders/MyEffect");
 _pWvp = _effect.Parameters["WorldViewProjection"]; _pAlbedoTex = _effect.Parameters["AlbedoTex"]; // etc.
 
 private readonly VertexPositionTexture[] _quad = new VertexPositionTexture[4];
@@ -92,7 +92,7 @@ Textures are bound by setting the `Texture2D` parameter (`AlbedoTex`), not by na
 3. If the technique uses samplers s0 and s2 only, still set `SamplerStates[0..3]` — cheap and avoids surprises.
 4. Keep C# constants in sync with `#define`s (`MaxLights == MAX_LIGHTS`, `BlurTaps == BLUR_TAPS`).
 5. Debug a black frame by adding a `Blit` technique and an env-var/keys to view each intermediate RT
-   (see monogame-project-setup for the headless screenshot flow).
+   (see monogame-headless-screenshots for capturing frames from the command line).
 
 ## Post-processing recipes
 - **Bright pass (soft knee):** `knee = T*k; soft = clamp(b - T + knee, 0, 2knee); soft = soft²/(4knee); c *= max(soft, b-T)/max(b,ε)`.

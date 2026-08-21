@@ -1,6 +1,6 @@
 ---
 name: monogame-deferred-2d-lighting
-description: Build a deferred-style 2D/2.5D lighting pipeline in MonoGame — albedo + normal G-buffer render targets via SpriteBatch, per-pixel normal-mapped point lights accumulated with an additive BlendState and scissor RasterizerState, composite, bloom, and explicit state management. Use when adding dynamic lights, normal maps, or multi-pass render-target rendering to a 2D MonoGame game.
+description: Deferred-style 2D/2.5D lighting pipeline for MonoGame — albedo + normal G-buffer render targets drawn with two SpriteBatch passes (no MRT needed on the GL profile), per-pixel normal-mapped point lights accumulated with an additive BlendState and a scissor RasterizerState, a matrix-free light shader that reconstructs pixel position from UV because the camera never rotates, composite, half-res bloom, final combine, and explicit graphics-state management with debug blits of every intermediate target. Use when adding dynamic lights, normal maps, or multi-pass render-target rendering to a 2D MonoGame game.
 ---
 
 # Deferred-style 2D lighting pipeline
@@ -11,15 +11,18 @@ Pass 2  NormalRT   SpriteBatch(view matrix)  SAME geometry, normal-map textures 
 Pass 3  LightRT    Clear(ambient); per light: additive blend + scissor rect, full-screen quad, PointLight shader
 Pass 4  SceneRT    Composite: albedo * light.rgb + light.a(spec)   then additive emissive particles
 Pass 5/6 BloomA/B  bright-pass at ½ res, separable blur ping-pong
-Pass 7  backbuffer FinalCombine (scene + bloom, vignette)
+Pass 7  backbuffer FinalCombine (scene + bloom, optional vignette)
 ```
 Two SpriteBatch passes replace MRT (not available with SpriteBatch on the GL profile).
 
-## Implementation in this project
-`Graphics/RenderPipeline.RenderFrame(view, zoom, drawScene, lights, drawEmissive, drawOverlay)` runs all passes;
-`Graphics/SceneBatch` is the only API scene code sees (`DrawTiled/DrawRect/Draw/DrawRotated` on `SpritePair`s);
-`Graphics/LightManager` holds persistent lights + `Flash()` transients and returns culled, strongest-first lights so the
-single-pass path can take the top 8. `GraphicsStates` owns every custom state.
+## Suggested structure
+- A `RenderPipeline.RenderFrame(view, zoom, drawScene, lights, drawEmissive, drawOverlay)` that runs all passes and
+  calls `drawScene` twice (albedo pass, normal pass).
+- A `SceneBatch` wrapper as the only API scene code sees (`DrawTiled/DrawRect/Draw/DrawRotated` on albedo+normal
+  `SpritePair`s); it picks the right texture for the current pass.
+- A `LightManager` holding persistent lights plus short `Flash()` transients, returning culled, strongest-first lights
+  so a single-pass variant can take the top N.
+- One `GraphicsStates` object owning every custom state.
 
 ## Coordinate trick that keeps the shader matrix-free
 Camera never rotates ⇒ view space == render-target pixel space ⇒ tangent-space normals of axis-aligned sprites are already
@@ -42,13 +45,13 @@ float spec = pow(saturate(dot(N,H)), SpecularPower) * SpecularAmount * step(0.00
 return float4(LightColor * NdotL * atten, spec * atten * luminance(LightColor));               // rgb diffuse, a spec
 ```
 Normal maps: +X right, +Y **down**, +Z toward viewer (DirectX-style green). Rotated sprites break "tangent==screen" —
-draw them in the normal pass through the `SpriteNormalRotate` pixel-shader-only technique (SceneBatch.DrawRotated does
-this automatically; see monogame-topdown-player for the HLSL), or use radially symmetric normal maps.
+draw them in the normal pass through a pixel-shader-only technique that rotates the sampled normal by the sprite's
+angle (the batch wrapper can do this automatically when a rotation is given), or use radially symmetric normal maps.
 
 ## Render targets
 
 ```csharp
-_albedoRT = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None);   // ×4 full res
+_albedoRT = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None);   // ×4 full res (albedo, normal, light, scene)
 _bloomA   = new RenderTarget2D(gd, w/2, h/2, false, SurfaceFormat.Color, DepthFormat.None); // ×2 half res
 // recreate when PresentationParameters.BackBuffer size changes (call an EnsureRenderTargets() at top of Draw)
 ```
@@ -77,7 +80,7 @@ _spriteBatch.End();
 
 ## Per-light pass with scissor clipping
 ```csharp
-gd.SetRenderTarget(_lightRT); gd.Clear(new Color(0.12f,0.12f,0.17f,0f));  // ambient rgb, 0 spec
+gd.SetRenderTarget(_lightRT); gd.Clear(new Color(0.12f,0.12f,0.17f,0f));  // ambient rgb (starting value), 0 spec
 gd.BlendState = _additive; gd.RasterizerState = _scissor; SetRtSamplers(); _pNormalTex.SetValue(_normalRT);
 foreach (var l in lights)
 {
@@ -90,7 +93,7 @@ foreach (var l in lights)
 }
 ```
 Because attenuation hits exactly zero at the radius, the scissor clip is invisible. Alternative single-pass: upload arrays
-of ≤8 lights and use an unrolled loop technique (toggle to compare).
+of ≤8 lights and use an unrolled loop technique (keep a toggle to compare).
 
 ## Composite / final
 ```csharp
