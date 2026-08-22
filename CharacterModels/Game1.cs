@@ -445,7 +445,7 @@ public class Game1 : Game
         if (Pressed(Keys.I)) _vegetationHidden = !_vegetationHidden;
         if (Pressed(Keys.T)) { _windPreset = (_windPreset + 1) % WindPresets.Length; _wind.Strength = WindPresets[_windPreset]; }
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
-        if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
+        if (Pressed(Keys.R) && _focus < 0) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
         if (Pressed(Keys.F) || Pressed(Keys.Tab))
         {
             int next = (_focus + 2) % (_characters.Count + 1) - 1;
@@ -488,6 +488,8 @@ public class Game1 : Game
         _camDistEffective = CameraCollision(_camDist);
 
         if (_focus >= 0) UpdatePlayer(dt, keys);
+        if (_focus < 0 && !_varied && Clips.All[_clipIndex] == Clips.Attack)
+            for (int i = 0; i < _characters.Count; i++) { var ch = _characters[i]; if (ch.CurrentAttack == null && !ch.Busy) ch.Attack((AttackKind)((i + (int)(_time / 2f)) % 3)); }
         foreach (var c in _characters) c.Update(dt);
         if (!_treesHidden) foreach (var t in _trees) t.Update(_time, _wind);
         _weather.Update(dt, _camTarget, _wind, _treesHidden ? _noLeafSources : _leafSources);
@@ -514,25 +516,27 @@ public class Game1 : Game
         bool moving = input.LengthSquared() > 0.01f;
         if (moving) input.Normalize();
 
-        if (Pressed(Keys.Q))
-        {
-            if (c.HasWeapon && !c.Drawn && !c.Busy) { c.ToggleWeapon(); c.Queued = Clips.Attack; }
-            else if (!c.Busy || c.Action == Clips.Attack) c.PlayAction(Clips.Attack);
-        }
+        if (Pressed(Keys.Q)) c.Attack(AttackKind.Light);
+        if (Pressed(Keys.R)) c.Attack(AttackKind.Heavy);
+        if (Pressed(Keys.C)) c.Attack(AttackKind.Special);
         if (Pressed(Keys.E) && !c.Busy) c.PlayAction(Clips.Wave);
         if (Pressed(Keys.X)) { if (c.Action == Clips.Dance) c.CancelAction(); else if (!c.Busy) c.PlayAction(Clips.Dance); }
         if (Pressed(Keys.H)) c.ToggleWeapon();
         if (moving && c.Action != null && c.Action.Name != "Draw") c.CancelAction();
+        bool attacking = c.CurrentAttack != null;
 
         bool run = keys.IsKeyDown(Keys.LeftShift) || keys.IsKeyDown(Keys.RightShift) || Program.Flag("walk");
         float walkOpt = Program.Opt("walk", 0);
-        var targetVel = moving ? input * (walkOpt > 1 ? walkOpt : run ? RunSpeed : WalkSpeed) : Vector3.Zero;
+        var (spMul, _) = c.Drawn ? Combat.Locomotion(c.Spec.Weapon) : (1f, 1f);
+        var targetVel = moving && !attacking ? input * (walkOpt > 1 ? walkOpt : run ? RunSpeed : WalkSpeed) * spMul : Vector3.Zero;
         float accel = moving ? 7f : 10f;
         if (c.Airborne) accel *= 0.25f;                          // limited air control, momentum carries
         _moveVel = Vector3.Lerp(_moveVel, targetVel, 1 - MathF.Exp(-dt * accel));
         float speed = _moveVel.Length();
 
-        if (moving && !c.Airborne)
+        // Attack root motion: step into the strike along the facing.
+        if (c.AttackAdvance != 0) c.Position += new Vector3(MathF.Sin(c.Yaw), 0, MathF.Cos(c.Yaw)) * c.AttackAdvance;
+        if (moving && !c.Airborne && !attacking)
         {
             // Turn toward the input direction (not the smoothed velocity, which lags and makes the body hunt).
             float targetYaw = MathF.Atan2(input.X, input.Z);
@@ -679,7 +683,8 @@ public class Game1 : Game
             var clip = _varied ? Clips.All[1 + (i + 1) % (Clips.All.Count - 1)] : Clips.All[_clipIndex];
             var c = _characters[i];
             c.CancelAction(); c.Speed = 0;
-            if (clip.Duration > 0) { c.Locomotion = Clips.Idle; c.PlayAction(clip); if (clip == Clips.Attack) { c.Drawn = true; } }
+            if (clip == Clips.Attack) { c.Locomotion = Clips.Idle; c.Drawn = true; c.DrawBlend = 1; c.Attack(AttackKind.Light); }
+            else if (clip.Duration > 0) { c.Locomotion = Clips.Idle; c.PlayAction(clip); }
             else c.Locomotion = clip;
         }
     }
@@ -941,7 +946,7 @@ public class Game1 : Game
         {
             if (_hudControlFocus != _focus)
             {
-                _hudLinesControl[0] = $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   Space  jump   H draw / sheathe weapon   Q attack   E wave   X dance";
+                _hudLinesControl[0] = $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   Space jump   H draw/sheathe   Q light   R heavy   C special   E wave   X dance";
                 _hudControlFocus = _focus;
             }
             lines = _hudLinesControl;

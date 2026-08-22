@@ -37,6 +37,7 @@ TopDownRaid keeps short stubs under `TopDownRaid/.claude/skills/` that point bac
 | `monogame-procedural-trees-wind` | Trees as skinned rigs (six styles), bone sway + vertex-shader leaf flutter, gust model, planting |
 | `monogame-procedural-structures` | Cottages, barn, well, tower, fences, walls, props from boxes/lofts; colliders, lights, the quaternion-order trap, growing the map |
 | `monogame-procedural-vegetation` | Grass, fields, flowers, bushes in one static mesh; wind and trampling in the vertex shader |
+| `monogame-weapon-combat` | Weapon stances, drawn-weapon movement, light/heavy/special attacks, chaining, the Pow-NaN trap |
 | `monogame-procedural-animation` | Gait tables, Catmull-Rom keys, spring follow-through, 2-bone IK, weapon sockets |
 | `monogame-zero-alloc-update-draw` | Measure per-frame allocations, the catalogue of hidden garbage in Update/Draw, pools, cached effect/state objects |
 | `monogame-scripted-playtest` | Input-script timeline → synthetic KeyboardState, frame recorder + contact sheet, per-frame CSV, scenario library |

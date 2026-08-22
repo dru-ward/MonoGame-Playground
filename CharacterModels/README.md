@@ -38,7 +38,8 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | `W A S D` | Move the controlled character (camera-relative) · hold `Shift` to run |
 | `Space` | Jump while controlling a character (short crouch, ~0.9 m leap, reduced air control, landing dip); toggles auto-orbit in the overview |
 | `H` | Draw / sheathe the weapon (reach to the back or hip sockets) |
-| `Q` / `E` / `X` | Attack (auto-draws first) / wave / dance (cancelled by moving) |
+| `Q` / `R` / `C` | Light / heavy / special attack for the controlled character's weapon (auto-draws first; a press during the recovery window buffers and chains). Knight: cut, overhead, shield bash · Barbarian: sweep, smash, whirlwind · Rogue: stabs, lunge, flurry · Mage: bolt, nova, channel · Ranger: shot, full draw, volley |
+| `E` / `X` | Wave / dance (cancelled by moving) |
 | Mouse drag / arrows | Orbit camera (inverted: drag left turns the view right, drag up looks down; `--no-invert` for direct) · right-drag pans · wheel zooms |
 | `Space` | Toggle auto-orbit turntable |
 | `L` / `K` | Rotate the key light |
@@ -104,6 +105,7 @@ runs. `--frames` saves numbered PNGs every `--every` seconds (plus a `final` fra
 | `Playtest.cs` | `InputScript` (timeline parser → synthetic `KeyboardState`) and `PlaytestRecorder` (PNG frames + CSV metrics). |
 | `Structures.cs` | The hamlet: timber-framed cottages (slate or thatch, lit windows, chimneys), a plank barn with hay bales, a stone well, a watchtower, post-and-rail fences, dry-stone walls with a gateway, barrels and crates — boxes and lofts in one static mesh, with AABB/circle colliders for the player and camera and point lights for the deferred path. The map is 48 m across. |
 | `Vegetation.cs` | Ground cover in one static mesh: grass blades (clumped by noise, root→tip colour gradient, up-biased normals), a tall golden field band with seed heads, wildflowers in single-species patches (daisy, buttercup, poppy, cornflower, bluebell), lumpy bushes with collision. Wind gusts/waves and trampling by the controlled character are computed in the vertex shader from a bend weight stored in colour alpha — no per-frame CPU work. |
+| `Combat.cs` | Per-weapon stances (a pose overlay applied while the weapon is drawn: sword-and-shield guard, two-handed axe grip with off-hand IK, dagger crouch, staff plant, nocked bow), movement modifiers, and three attacks per weapon built from curve helpers with trunk-driven power, root-motion steps, hit moments and cancel windows. |
 | `Weather.cs` | CPU particles drawn unlit through a `BasicEffect` after the lit scene: rain streaks stretched along velocity and faded into the fog, expanding splash rings where drops land, and leaves shed from tree crowns that tumble, flutter, drift with the gusts, settle and skitter in strong wind. |
 | `Game1.cs` | Scene, orbit camera with collision against tree trunks and the exact foliage volumes, circle push-out collision for the controlled character against tree trunks, lamp posts and other characters, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
 

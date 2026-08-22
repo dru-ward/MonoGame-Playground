@@ -75,6 +75,18 @@ public sealed class Character
     public Clip Move { get; private set; } = null!;
     /// <summary>Airborne pose driven by the jump state (see <see cref="Jump"/>); used as the locomotion clip while in the air.</summary>
     public Clip JumpClip { get; private set; } = null!;
+    // ---- Weapon combat (see Combat.cs)
+    public Combat.AttackDef? CurrentAttack { get; private set; }
+    private Clip? _attackClip;
+    private float _attackTime;
+    private AttackKind? _queuedAttack;
+    public float AttackProgress => CurrentAttack == null ? 0f : _attackTime / CurrentAttack.Duration;
+    /// <summary>Root motion requested by the current attack this frame (character-space forward metres).</summary>
+    public float AttackAdvance;
+    /// <summary>Raised when an attack reaches its hit moment (projectile launch, VFX, damage).</summary>
+    public event Action<Character, Combat.AttackDef>? AttackHit;
+    private bool _hitFired;
+    private float _stanceAmount;
     // ---- Jump state (vertical motion is integrated here; the game moves xz).
     public bool Airborne;
     public float VerticalVelocity;
@@ -100,7 +112,7 @@ public sealed class Character
     public Clip? Action { get; private set; }
     public Clip? Queued;
     private float _actionTime;
-    public bool Busy => Action != null;
+    public bool Busy => Action != null || CurrentAttack != null;
 
     /// <summary>Weapon state: 1 = in hand, 0 = in the sheath socket.</summary>
     public bool Drawn;
@@ -109,7 +121,7 @@ public sealed class Character
     private Clip? _reach;
     private float _swapAt = -1;
 
-    public void CancelAction() { Action = null; Queued = null; _swapAt = -1; }
+    public void CancelAction() { Action = null; Queued = null; _swapAt = -1; CancelAttack(); }
 
     public void PlayAction(Clip clip)
     {
@@ -133,6 +145,33 @@ public sealed class Character
         if (Skeleton.Has("sheathL")) reaches.Add((1, "sheathL", Spec.Weapon == Weapon.Daggers ? new Vector3(1f, 0.2f, 0.6f) : new Vector3(0.8f, 0.9f, -0.3f)));
         return Clips.Reach(Skeleton, reaches, 0.9f);
     }
+
+    /// <summary>Starts (or queues, during the cancel window of the current attack) a weapon attack. Auto-draws first.</summary>
+    public void Attack(AttackKind kind)
+    {
+        if (!HasWeapon || Airborne) return;
+        if (!Drawn) { if (!Busy) { ToggleWeapon(); _queuedAttack = kind; } return; }
+        if (CurrentAttack != null)
+        {
+            if (AttackProgress >= CurrentAttack.CancelFrom) StartAttack(kind);    // chain straight into the next
+            else _queuedAttack = kind;                                            // buffer it
+            return;
+        }
+        if (Busy) return;
+        StartAttack(kind);
+    }
+
+    private void StartAttack(AttackKind kind)
+    {
+        var def = Combat.Get(Spec.Weapon, kind);
+        CurrentAttack = def; _attackTime = 0f; _hitFired = false; _queuedAttack = null;
+        _attackClip = new Clip(def.Name, (t, w) => def.Pose(MathHelper.Clamp(_attackTime / def.Duration, 0, 1), w, Skeleton), def.Duration);
+        Action = null; Queued = null; _swapAt = -1;
+        Player.BlendDuration = 0.08f;
+        Player.Play(_attackClip, restart: true);
+    }
+
+    public void CancelAttack() { CurrentAttack = null; _attackClip = null; _queuedAttack = null; AttackAdvance = 0; }
 
     /// <summary>Starts a jump: a 90 ms crouch, then launch. Ignored while airborne or busy with an action.</summary>
     public void Jump()
@@ -211,13 +250,40 @@ public sealed class Character
             }
         }
         UpdateJump(dt);
-        if (Action == null) Player.Play(Airborne ? JumpClip : Locomotion);
-        Player.BlendDuration = Airborne || _airTime > 0f && _airTime < 0.3f ? 0.12f : 0.4f;
+        AttackAdvance = 0f;
+        if (CurrentAttack != null)
+        {
+            float prev = _attackTime; _attackTime += dt;
+            var def = CurrentAttack;
+            // Root motion: the advance is spread over the strike window (hit ± 0.1 of the cycle), a smooth push.
+            float a0 = MathF.Max(0, def.HitAt - 0.12f * def.Duration), a1 = MathF.Min(def.Duration, def.HitAt + 0.08f * def.Duration);
+            if (def.RootAdvance > 0 && _attackTime > a0 && prev < a1)
+                AttackAdvance = def.RootAdvance * (MathF.Min(_attackTime, a1) - MathF.Max(prev, a0)) / (a1 - a0);
+            if (!_hitFired && _attackTime >= def.HitAt) { _hitFired = true; AttackHit?.Invoke(this, def); }
+            if (_queuedAttack != null && _attackTime / def.Duration >= def.CancelFrom) StartAttack(_queuedAttack.Value);
+            else if (_attackTime >= def.Duration) { CurrentAttack = null; _attackClip = null; }
+        }
+        else if (_queuedAttack != null && Drawn && !Busy) StartAttack(_queuedAttack.Value);
+        if (CurrentAttack == null)
+        {
+            if (Action == null) Player.Play(Airborne ? JumpClip : Locomotion);
+            Player.BlendDuration = Airborne || _airTime > 0f && _airTime < 0.3f ? 0.12f : 0.25f;
+        }
+        // Stance overlay fades in with the draw and out while attacking.
+        float stanceTarget = Drawn && CurrentAttack == null && Action == null && !Airborne ? 1f : 0f;
+        _stanceAmount = MathHelper.Lerp(_stanceAmount, stanceTarget, 1 - MathF.Exp(-dt * 8f));
+        Player.Overlay = _stanceAmount > 0.01f ? ApplyStance : null;
         Player.Update(dt);
         ApplyMotionLayer(dt);
 
         DrawBlend = MathHelper.Lerp(DrawBlend, Drawn ? 1f : 0f, 1 - MathF.Exp(-dt * 14f));
         AttachWeapons();
+    }
+
+    private void ApplyStance(PoseWriter w)
+    {
+        float sp = Speed / (Spec.Height / 1.8f);
+        Combat.Stance(Spec.Weapon, _stanceAmount * DrawBlend, sp, Player.ClipTime, w, Skeleton);
     }
 
     private void UpdateJump(float dt)

@@ -73,6 +73,13 @@ public readonly struct PoseWriter
 
     public void Root(Vector3 offset) => _pose.RootOffset = offset;
 
+    /// <summary>Rotates a weapon bone in its own frame (degrees about local X): e.g. present a bow perpendicular to the arm.</summary>
+    public void WeaponTilt(string bone, float degrees)
+    {
+        if (!_skel.Has(bone)) return;
+        _pose.Rotations[_skel[bone].Index] = Quaternion.CreateFromAxisAngle(Vector3.Right, Rad(degrees));
+    }
+
     /// <summary>Blends the pose written so far toward another pose (t = 1 replaces it).</summary>
     public void BlendToward(Pose other, float t) => _pose.BlendFrom(_pose, other, t);
 
@@ -175,6 +182,8 @@ public sealed class AnimationPlayer
     public float BlendDuration = 0.4f;
     public float Damping = 0.7f;   // ζ: 0.7 gives one small visible overshoot on stops/turns without ringing
     public float TimeOffset;
+    /// <summary>Optional pose overlay written on top of the current clip each frame (stances, aim).</summary>
+    public Action<PoseWriter>? Overlay;
     public Clip? Current => _current;
     /// <summary>Time into the current clip (one-shots start at 0).</summary>
     public float ClipTime => _time + TimeOffset;
@@ -213,10 +222,12 @@ public sealed class AnimationPlayer
 
         _a.Reset();
         _current?.Evaluate(_time + TimeOffset, new PoseWriter(_a, _skel));
+        Overlay?.Invoke(new PoseWriter(_a, _skel));
         if (_blend < 1f && _previous != null)
         {
             _b.Reset();
             _previous.Evaluate(_prevTime + TimeOffset, new PoseWriter(_b, _skel));
+            Overlay?.Invoke(new PoseWriter(_b, _skel));
             float s = _blend * _blend * _blend * (_blend * (_blend * 6 - 15) + 10);   // smootherstep
             _out.BlendFrom(_b, _a, s);
         }
@@ -248,7 +259,11 @@ public sealed class AnimationPlayer
             var acc = (target - x) * (w * w) - v * (2 * Damping * w);
             v += acc * dt;
             x += v * dt;
-            x.Normalize();
+            // A fast target flip can drive x through the origin: renormalising a near-zero quaternion yields NaN
+            // which then poisons the whole skeleton. Snap to the target instead and reset the spring.
+            float len = x.Length();
+            if (len < 0.3f || float.IsNaN(len)) { x = target; v = default; }
+            else x = Quaternion.Multiply(x, 1f / len);
             _vel[i] = v; _smooth.Rotations[i] = x;
         }
         const float rw = MathHelper.TwoPi * 9f;
