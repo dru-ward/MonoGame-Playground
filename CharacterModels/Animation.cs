@@ -326,7 +326,7 @@ public static class Clips
     // Joint curves modelled on human gait data (heel strike at 0, loading response, mid-stance, push-off ~0.6, swing).
     public static readonly Gait WalkGait = new()
     {
-        Hz = 1.25f, Speed = 1.5f, Lean = 2f, Bob = 0.018f, Sway = 0.005f, Flight = 0,
+        Hz = 1.25f, Speed = 1.5f, Lean = 2f, Bob = 0.018f, Sway = 0.002f, Flight = 0,
         ArmSwing = 18f, ElbowBase = 12f, ElbowSwing = 14f, PelvisYaw = 4f, PelvisDrop = 2.5f, ShoulderYaw = 5f,
         Hip = new[] { (0f, 24f), (0.12f, 20f), (0.3f, 6f), (0.5f, -11f), (0.62f, -9f), (0.75f, 8f), (0.88f, 21f), (1f, 24f) },
         Knee = new[] { (0f, 6f), (0.12f, 18f), (0.3f, 8f), (0.45f, 9f), (0.55f, 32f), (0.68f, 62f), (0.8f, 44f), (0.9f, 14f), (1f, 6f) },
@@ -336,7 +336,7 @@ public static class Clips
 
     public static readonly Gait RunGait = new()
     {
-        Hz = 2.2f, Speed = 4.4f, Lean = 10f, Bob = 0.04f, Sway = 0.004f, Flight = 0.03f,
+        Hz = 2.2f, Speed = 4.4f, Lean = 10f, Bob = 0.04f, Sway = 0.002f, Flight = 0.03f,
         ArmSwing = 40f, ElbowBase = 80f, ElbowSwing = 25f, PelvisYaw = 5f, PelvisDrop = 3f, ShoulderYaw = 7f,
         Hip = new[] { (0f, 34f), (0.15f, 26f), (0.35f, 2f), (0.5f, -17f), (0.6f, -9f), (0.75f, 22f), (0.9f, 34f), (1f, 34f) },
         Knee = new[] { (0f, 22f), (0.12f, 42f), (0.3f, 24f), (0.45f, 38f), (0.6f, 92f), (0.72f, 108f), (0.85f, 62f), (1f, 22f) },
@@ -374,9 +374,12 @@ public static class Clips
         // Root: lowest at double support, highest at mid-stance; a hint of sway over the stance foot; flight adds lift.
         w.Root(new Vector3(sway * s1, -0.5f * bob * c2 + flight * Pos(-c2, 0.3f), 0));
         // Pelvis and trunk counter-rotation; the head stays level and steady.
+        // The pelvis drops toward the swing leg; the lumbar spine and chest tilt the other way so the trunk and head
+        // stay level (the hips bone is the root of the spine chain — without this counter-tilt the whole upper body
+        // rocks side to side every step).
         w.Upright("hips", 0, -pelvisDrop * s1, -pelvisYaw * c1);
-        w.Upright("spine", lean * 0.45f, 0.6f * s1, shoulderYaw * 0.45f * c1 + pelvisYaw * 0.5f * c1);
-        w.Upright("chest", lean * 0.45f, -0.3f * s1, shoulderYaw * 0.55f * c1 + pelvisYaw * 0.5f * c1);
+        w.Upright("spine", lean * 0.45f, pelvisDrop * 0.6f * s1, shoulderYaw * 0.45f * c1 + pelvisYaw * 0.5f * c1);
+        w.Upright("chest", lean * 0.45f, pelvisDrop * 0.4f * s1, shoulderYaw * 0.55f * c1 + pelvisYaw * 0.5f * c1);
         w.Upright("neck", -lean * 0.4f, 0, -shoulderYaw * 0.4f * c1);
         w.Upright("head", -lean * 0.35f + 0.5f * c2, 0, -shoulderYaw * 0.4f * c1);
 

@@ -162,3 +162,11 @@ position/yaw history (not from input), spring-smoothed so it is reactive but nev
 Playtest gotcha: a "character stands still while W is held" strip was a *collision* — he ran into the
 character standing beside him and the displacement-driven animation correctly idled. Check the path before
 blaming the animation.
+
+## Side-to-side rocking while walking/running: the pelvis is the root of the spine
+If the hips bone is the parent of the spine chain, the pelvic drop of the gait (2.5–3° toward the swing leg)
+tilts the entire trunk and head every step — measured as 4–5 cm of lateral head travel relative to the hips.
+Humans cancel it in the lumbar spine. Counter-tilt: `spine tilt = +pelvisDrop × 0.6 × s1`,
+`chest tilt = +pelvisDrop × 0.4 × s1` (hips stay at `−pelvisDrop × s1`, so the legs and belt still show the
+drop), root lateral sway ≤ 2 mm. Result: 1.6 / 2.0 / 2.3 cm at walk / blend / run, the rest being shoulder
+motion. Same idea as the pelvis-yaw counter-rotation already applied for the shoulders.
