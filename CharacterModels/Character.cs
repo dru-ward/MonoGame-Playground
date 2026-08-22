@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -520,7 +521,8 @@ public static class CharacterBuilder
             // Weapon bone sits at the hand; its BindRotation turns the hanging bind-pose weapon into a natural grip
             // (blade forward-down across the fist for swords/axes/daggers, vertical for staff and bow).
             bool grip = spec.Weapon is Weapon.Sword or Weapon.Axe or Weapon.Daggers;
-            var wb = sk.Add(BoneNames.Of("weapon", L), BoneNames.Of("hand", L), Vector3.Zero, new Vector3(0, -0.3f * s, 0));
+            // The weapon bone sits at the palm (10 cm below the wrist, a touch forward), so the grip rotation pivots inside the fist.
+            var wb = sk.Add(BoneNames.Of("weapon", L), BoneNames.Of("hand", L), new Vector3(0, -0.10f * s, 0.012f * s), new Vector3(0, -0.3f * s, 0));
             wb.BindRotation = grip ? Quaternion.CreateFromAxisAngle(Vector3.Right, MathHelper.ToRadians(-58f)) : Quaternion.Identity;
         }
 
@@ -635,19 +637,65 @@ public static class CharacterBuilder
             Color handCol = spec.Gloves ? spec.Leather : spec.Skin;
             Vector2 handMat = spec.Gloves ? Mat.Leather : Mat.Skin;
             var handW = new Weighter(sk, 4, BoneNames.Of("fore", L), BoneNames.Of("hand", L));
-            mb.Loft(new[]
+            // A hand that holds a weapon is built as a fist: the fingers curl under into a knuckle block and the thumb
+            // wraps across the front, so a grip running through the palm (y ~ 0.76) reads as gripped, not resting beside it.
+            bool fist = spec.Weapon switch
             {
-                new Ring(new Vector3(x, 0.86f * s, 0), 0.024f * s * b, 0.036f * s * b, handCol, handMat),
-                new Ring(new Vector3(x, 0.80f * s, 0.005f * s), 0.027f * s * b, 0.046f * s * b, handCol, handMat),
-                new Ring(new Vector3(x, 0.745f * s, 0.008f * s), 0.025f * s * b, 0.044f * s * b, handCol, handMat),
-                new Ring(new Vector3(x, 0.70f * s, 0.008f * s), 0.019f * s * b, 0.032f * s * b, handCol, handMat)
-            }, 16, handW, Vector3.Backward, capEnd: true);
-            mb.Loft(new[]
+                Weapon.Sword => side < 0,
+                Weapon.Axe or Weapon.Staff => true,      // two-handed: both fists
+                Weapon.Daggers => true,
+                Weapon.Bow => side > 0,
+                _ => false
+            };
+            if (fist)
             {
-                new Ring(new Vector3(x - side * 0.008f * s, 0.83f * s, 0.03f * s), 0.014f * s * b, handCol, handMat),
-                new Ring(new Vector3(x - side * 0.022f * s, 0.79f * s, 0.05f * s), 0.012f * s * b, handCol, handMat),
-                new Ring(new Vector3(x - side * 0.03f * s, 0.765f * s, 0.06f * s), 0.009f * s * b, handCol, handMat)
-            }, 10, Weighter.Fixed(sk, BoneNames.Of("hand", L)), Vector3.Backward, capEnd: true, capSteps: 3);
+                var fistW = Weighter.Fixed(sk, BoneNames.Of("hand", L));
+                mb.Loft(new[]
+                {
+                    new Ring(new Vector3(x, 0.86f * s, 0), 0.024f * s * b, 0.036f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x, 0.815f * s, 0.004f * s), 0.03f * s * b, 0.046f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x, 0.76f * s, 0.006f * s), 0.034f * s * b, 0.048f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x, 0.715f * s, 0.004f * s), 0.03f * s * b, 0.042f * s * b, handCol, handMat)
+                }, 16, handW, Vector3.Backward, capEnd: true, capSteps: 3);
+                // Curled fingers: four short tubes that leave the palm forward at the knuckle, curl down and come back
+                // under the grip - the grip sits inside the loop they make.
+                for (int k = 0; k < 4; k++)
+                {
+                    float fx = x + (k - 1.5f) * 0.015f * s * b;
+                    float fr = (k == 0 || k == 3 ? 0.0085f : 0.0095f) * s * b;
+                    mb.Loft(new[]
+                    {
+                        new Ring(new Vector3(fx, 0.795f * s, 0.030f * s), fr, handCol, handMat),
+                        new Ring(new Vector3(fx, 0.775f * s, 0.056f * s), fr, handCol, handMat),
+                        new Ring(new Vector3(fx, 0.745f * s, 0.058f * s), fr * 0.95f, handCol, handMat),
+                        new Ring(new Vector3(fx, 0.725f * s, 0.036f * s), fr * 0.9f, handCol, handMat),
+                        new Ring(new Vector3(fx, 0.728f * s, 0.018f * s), fr * 0.8f, handCol, handMat)
+                    }, 8, fistW, Vector3.Right, capStart: true, capEnd: true, capSteps: 2);
+                }
+                // Thumb across the front of the grip.
+                mb.Loft(new[]
+                {
+                    new Ring(new Vector3(x - side * 0.02f * s, 0.80f * s, 0.02f * s), 0.012f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x - side * 0.005f * s, 0.79f * s, 0.045f * s), 0.011f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x + side * 0.02f * s, 0.785f * s, 0.05f * s), 0.009f * s * b, handCol, handMat)
+                }, 10, fistW, Vector3.Up, capEnd: true, capSteps: 3);
+            }
+            else
+            {
+                mb.Loft(new[]
+                {
+                    new Ring(new Vector3(x, 0.86f * s, 0), 0.024f * s * b, 0.036f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x, 0.80f * s, 0.005f * s), 0.027f * s * b, 0.046f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x, 0.745f * s, 0.008f * s), 0.025f * s * b, 0.044f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x, 0.70f * s, 0.008f * s), 0.019f * s * b, 0.032f * s * b, handCol, handMat)
+                }, 16, handW, Vector3.Backward, capEnd: true);
+                mb.Loft(new[]
+                {
+                    new Ring(new Vector3(x - side * 0.008f * s, 0.83f * s, 0.03f * s), 0.014f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x - side * 0.022f * s, 0.79f * s, 0.05f * s), 0.012f * s * b, handCol, handMat),
+                    new Ring(new Vector3(x - side * 0.03f * s, 0.765f * s, 0.06f * s), 0.009f * s * b, handCol, handMat)
+                }, 10, Weighter.Fixed(sk, BoneNames.Of("hand", L)), Vector3.Backward, capEnd: true, capSteps: 3);
+            }
 
             // Leg
             float lx = side * hw;

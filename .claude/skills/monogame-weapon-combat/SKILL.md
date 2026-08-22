@@ -81,6 +81,19 @@ went behind the back, two-handed grips separated, swings had no arc. Swing arcs 
 * Parallel edge/axis (asking for "up" with edge "up") made the basis degenerate → NaN; fall back to a cross with
   Backward when the cross with Up vanishes.
 
+## 4c. "The weapon is hovering next to the hand": fists and the grip pivot
+Two separate causes, both needed fixing:
+* **Pivot.** The weapon bone was parented at the *wrist* with a grip `BindRotation` (−58° about X), so the
+  rotation swung the grip forward/down away from the palm and the haft ran along the outside of the hand.
+  Put the weapon bone at the **palm** (`LocalOffset = (0, −0.10·s, 0.012·s)` from the wrist); the weapon mesh
+  was already built in body space at palm height, so nothing else moves — the inverse-bind absorbs it — and
+  sheath sockets are unaffected.
+* **Fist.** A closed mitten can't "hold" anything. Any hand that carries a weapon is built as a fist: a thicker
+  palm block (rings 0.86/0.815/0.76/0.715, radii up to 0.034 × 0.048), four curled finger tubes that leave the
+  knuckle forward, come down and return *under* the grip (so the grip sits inside the loop), and a thumb across
+  the front. Decide per side: sword/bow one fist, axe/staff/daggers both. Weight the fingers to the hand bone only.
+* Judge grips at `cam -35 2 1.6` with `--ty 0.5` (waist height); a `look` command de-focuses and un-draws.
+
 ## 5. Gotchas (the expensive ones)
 * **NaN poisons everything.** `MathF.Pow(1 − (x−0.65)/0.35, 1.8)` at x = 1 sees a *slightly negative* base
   (rounding) → NaN → every bone NaN → the character silently vanishes. Clamp the base. Keep a canary in the
