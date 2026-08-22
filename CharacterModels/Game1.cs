@@ -61,7 +61,7 @@ public class Game1 : Game
     private readonly List<Tree> _trees = new();
     private readonly Wind _wind = new();
     private Weather _weather = null!;
-    private readonly List<(Vector3 pos, float height, Color[] colors)> _leafSources = new();
+    private readonly List<(Vector3 pos, float height, Color[] colors)> _leafSources = new(), _noLeafSources = new();
     private static readonly float[] WindPresets = { 0f, 0.35f, 0.7f, 1.3f };
     private int _windPreset = 2;
     private VertexBuffer _groundVb = null!;
@@ -81,6 +81,8 @@ public class Game1 : Game
     private float _lightYaw = MathHelper.ToRadians(35);
     private bool _wireframe;
     private bool _varied;
+    private bool _undressed, _treesHidden;
+    private readonly List<CharacterSpec> _dressedSpecs = new();
     private int _clipIndex = 1;
 
     private RenderTarget2D? _shotTarget;
@@ -143,6 +145,7 @@ public class Game1 : Game
             c.Player.TimeOffset = i * 1.7f;
             c.Locomotion = Clips.Idle;
             _characters.Add(c);
+            _dressedSpecs.Add(specs[i]);
         }
         BuildGround();
         PlantTrees((int)Program.Opt("trees", 22), (int)Program.Opt("seed", 7));
@@ -164,6 +167,8 @@ public class Game1 : Game
             });
         }
         if (Program.Flag("forward")) _useDeferred = false;
+        if (Program.Flag("undressed")) SetUndressed(true);
+        if (Program.Flag("no-trees")) _treesHidden = true;
         if (Program.Options.TryGetValue("script", out var scriptText))
         {
             _script = InputScript.Parse(scriptText);
@@ -219,6 +224,15 @@ public class Game1 : Game
         }
         foreach (var t in _trees) t.Update(_time, _wind);
         for (float t = 0; t < MathF.Min(warm, 4f); t += 1f / 30f) _weather.Update(1f / 30f, _camTarget, _wind, _leafSources);
+    }
+
+    /// <summary>Swaps every character between its dressed spec and the base-body version (mesh rebuild, rig and animation untouched).</summary>
+    private void SetUndressed(bool undressed)
+    {
+        _undressed = undressed;
+        for (int i = 0; i < _characters.Count; i++)
+            CharacterBuilder.Rebuild(GraphicsDevice, _characters[i], undressed ? _dressedSpecs[i].Undress() : _dressedSpecs[i]);
+        _hudStatsKey = -1;   // triangle counts changed
     }
 
     /// <summary>Plants a ring of mixed-style trees around the plaza with a minimum spacing; --trees 0 disables.</summary>
@@ -366,6 +380,8 @@ public class Game1 : Game
         if (Pressed(Keys.G)) _wireframe = !_wireframe;
         if (Pressed(Keys.B)) _useDeferred = !_useDeferred;
         if (Pressed(Keys.N)) _weather.Raining = !_weather.Raining;
+        if (Pressed(Keys.U)) SetUndressed(!_undressed);
+        if (Pressed(Keys.Y)) _treesHidden = !_treesHidden;
         if (Pressed(Keys.T)) { _windPreset = (_windPreset + 1) % WindPresets.Length; _wind.Strength = WindPresets[_windPreset]; }
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
         if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
@@ -410,8 +426,8 @@ public class Game1 : Game
 
         if (_focus >= 0) UpdatePlayer(dt, keys);
         foreach (var c in _characters) c.Update(dt);
-        foreach (var t in _trees) t.Update(_time, _wind);
-        _weather.Update(dt, _camTarget, _wind, _leafSources);
+        if (!_treesHidden) foreach (var t in _trees) t.Update(_time, _wind);
+        _weather.Update(dt, _camTarget, _wind, _treesHidden ? _noLeafSources : _leafSources);
         if (_script != null && _script.Done && !_scriptDone) { _scriptDone = true; _scriptEndTime = _time; }
 
         _prevKeys = keys; _prevMouse = mouse;
@@ -489,7 +505,7 @@ public class Game1 : Game
     {
         var dir = Vector3.Transform(Vector3.Backward, Matrix.CreateRotationX(-_camPitch) * Matrix.CreateRotationY(_camYaw));
         float best = dist;
-        for (int i = 0; i < _trees.Count; i++)
+        for (int i = 0; i < (_treesHidden ? 0 : _trees.Count); i++)
         {
             var t = _trees[i];
             if (Vector3.DistanceSquared(t.Position, _camTarget) > (dist + 3f) * (dist + 3f)) continue;
@@ -527,7 +543,7 @@ public class Game1 : Game
         const float selfR = 0.28f;
         for (int pass = 0; pass < 2; pass++)
         {
-            foreach (var t in _trees) PushOut(ref c.Position, t.Position, selfR + t.Radius);
+            if (!_treesHidden) foreach (var t in _trees) PushOut(ref c.Position, t.Position, selfR + t.Radius);
             foreach (var (pos, _, _, _, _) in Lamps) PushOut(ref c.Position, new Vector3(pos.X, 0, pos.Z), selfR + 0.07f);
             foreach (var o in _characters) if (o != c) PushOut(ref c.Position, o.Position, selfR + 0.3f);
         }
@@ -585,6 +601,7 @@ public class Game1 : Game
         var sceneCenter = new Vector3(0, 0.9f, 0);
         var lightView = Matrix.CreateLookAt(sceneCenter - lightDir * 18f, sceneCenter, Vector3.Up);
         float shadowExtent = _trees.Count > 0 ? 20f : 8.5f;
+        if (_treesHidden) shadowExtent = 8.5f;
         var lightProj = Matrix.CreateOrthographic(shadowExtent, shadowExtent, 1f, 36f);
         var lightVp = lightView * lightProj;
 
@@ -736,7 +753,7 @@ public class Game1 : Game
         }
 
         foreach (var c in _characters) DrawSkinned(c.World, c.Skeleton.Palette, c.VertexBuffer, c.IndexBuffer);
-        foreach (var t in _trees) DrawSkinned(t.World, t.Skeleton.Palette, t.VertexBuffer, t.IndexBuffer);
+        if (!_treesHidden) foreach (var t in _trees) DrawSkinned(t.World, t.Skeleton.Palette, t.VertexBuffer, t.IndexBuffer);
     }
 
     private void DrawSkinned(Matrix world, Matrix[] palette, VertexBuffer vb, IndexBuffer ib)
@@ -760,13 +777,13 @@ public class Game1 : Game
         "F / Tab  focus a character and take control of it (WASD + Shift)",
         "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
         "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-        "Space auto-orbit   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+        "Space auto-orbit   T wind   N rain   U undress   Y trees   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
     };
     private readonly string[] _hudLinesControl =
     {
         "",
         "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
-        "1-7 animation   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+        "1-7 animation   T wind   N rain   U undress   Y trees   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
     };
     private int _hudControlFocus = -2;
     private string _hudStats = "";
@@ -796,7 +813,8 @@ public class Game1 : Game
         var sb = _hud; sb.Clear();
         sb.Append("Animation: ").Append(_varied ? "varied" : Clips.All[_clipIndex].Name);
         sb.Append("     Focus: ").Append(_focus < 0 ? "all" : _characters[_focus].Spec.Name);
-        sb.Append("     Trees: ").Append(_trees.Count);
+        sb.Append("     Trees: ").Append(_treesHidden ? 0 : _trees.Count);
+        if (_undressed) sb.Append("   Base bodies");
         sb.Append("   Wind: ").Append(_wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale");
         sb.Append(" (").AppendFixed(_wind.Strength, 2).Append(')');
         sb.Append("   Rain: ").Append(_weather.Raining ? "on" : "off");

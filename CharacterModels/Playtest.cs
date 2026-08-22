@@ -34,6 +34,12 @@ public sealed class InputScript
         ["6"] = Keys.D6, ["7"] = Keys.D7
     };
 
+    static InputScript()
+    {
+        // Every single letter maps to its key; the table above only needs the special names.
+        for (char ch = 'a'; ch <= 'z'; ch++) KeyNames.TryAdd(ch.ToString(), (Keys)((int)Keys.A + (ch - 'a')));
+    }
+
     public readonly List<Step> Steps = new();
     private int _index = -1;
     private float _stepTime;

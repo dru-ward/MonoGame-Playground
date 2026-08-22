@@ -33,6 +33,21 @@ public sealed class CharacterSpec
     public Weapon Weapon = Weapon.None;
     public Sleeves Sleeves = Sleeves.Short;
     public bool Beard, Ponytail, Pauldrons, ChestPlate, Shield, Robe, Quiver, Backpack, Belt = true, Gloves;
+    /// <summary>Base-body view: no clothing, armour, headgear or boots — a plain skin-coloured figure (hair, beard and weapon kept).</summary>
+    public bool Undressed;
+
+    /// <summary>Copy of this spec with every garment and piece of gear removed; proportions, face, hair and weapon are unchanged.</summary>
+    public CharacterSpec Undress()
+    {
+        var u = (CharacterSpec)MemberwiseClone();
+        u.Undressed = true;
+        u.Shirt = u.Pants = u.Boots = u.Leather = u.Metal = u.Accent = Skin;
+        u.ShirtMaterial = Mat.Skin;
+        u.Robe = u.ChestPlate = u.Pauldrons = u.Shield = u.Quiver = u.Backpack = u.Belt = u.Gloves = false;
+        u.Sleeves = Sleeves.Short;
+        u.HeadGear = HeadGear switch { HeadGear.Bald => HeadGear.Bald, _ => HeadGear.ShortHair };
+        return u;
+    }
 }
 
 /// <summary>A built, renderable skinned character.</summary>
@@ -211,6 +226,18 @@ public static class CharacterBuilder
         return character;
     }
 
+    /// <summary>Rebuilds the mesh for a different spec of the same proportions (e.g. undressed), keeping skeleton, animation and position.</summary>
+    public static void Rebuild(GraphicsDevice device, Character c, CharacterSpec spec)
+    {
+        var mb = new MeshBuilder();
+        BuildBody(mb, c.Skeleton, spec);
+        var (vb, ib) = mb.Upload(device);
+        c.VertexBuffer.Dispose(); c.IndexBuffer.Dispose();
+        c.VertexBuffer = vb; c.IndexBuffer = ib; c.Triangles = mb.TriangleCount; c.Vertices = mb.VertexCount;
+        c.MeshVertices = mb.Vertices; c.MeshIndices = mb.Indices;
+        c.Spec = spec;
+    }
+
     // --------------------------------------------------------------- skeleton
 
     private static Skeleton BuildSkeleton(CharacterSpec spec)
@@ -373,7 +400,8 @@ public static class CharacterBuilder
             float lx = side * hw;
             var legW = new Weighter(sk, 4, "hips", BoneNames.Of("thigh", L), BoneNames.Of("shin", L), BoneNames.Of("foot", L));
             Color legCol(float y) => y < 0.31f ? spec.Boots : spec.Pants;
-            Vector2 legMat(float y) => y < 0.31f ? Mat.Leather : Mat.Cloth;
+            var bootMat = spec.Undressed ? Mat.Skin : Mat.Leather;
+            Vector2 legMat(float y) => y < 0.31f ? bootMat : spec.Undressed ? Mat.Skin : Mat.Cloth;
             (float y, float r)[] lp =
             {
                 (0.96f, 0.088f), (0.86f, 0.082f), (0.72f, 0.071f), (0.58f, 0.061f), (0.48f, 0.057f),
@@ -386,19 +414,19 @@ public static class CharacterBuilder
             // Boot cuff
             mb.Loft(new[]
             {
-                new Ring(new Vector3(lx, 0.22f * s, 0), 0.062f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.30f * s, 0), 0.066f * s * b, spec.Boots, Mat.Leather)
+                new Ring(new Vector3(lx, 0.22f * s, 0), 0.062f * s * b, spec.Boots, bootMat),
+                new Ring(new Vector3(lx, 0.30f * s, 0), 0.066f * s * b, spec.Boots, bootMat)
             }, Seg, new Weighter(sk, 4, BoneNames.Of("shin", L), BoneNames.Of("foot", L)), Vector3.Backward, capStart: true, capEnd: true, capSteps: 2);
 
             // Foot
             var footW = new Weighter(sk, 5, BoneNames.Of("shin", L), BoneNames.Of("foot", L), BoneNames.Of("toe", L));
             mb.Loft(new[]
             {
-                new Ring(new Vector3(lx, 0.05f * s, -0.05f * s), 0.046f * s * b, 0.042f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.045f * s, 0.02f * s), 0.052f * s * b, 0.045f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.040f * s, 0.08f * s), 0.051f * s * b, 0.040f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.036f * s, 0.12f * s), 0.048f * s * b, 0.035f * s * b, spec.Boots, Mat.Leather),
-                new Ring(new Vector3(lx, 0.032f * s, 0.17f * s), 0.040f * s * b, 0.028f * s * b, spec.Boots, Mat.Leather)
+                new Ring(new Vector3(lx, 0.05f * s, -0.05f * s), 0.046f * s * b, 0.042f * s * b, spec.Boots, bootMat),
+                new Ring(new Vector3(lx, 0.045f * s, 0.02f * s), 0.052f * s * b, 0.045f * s * b, spec.Boots, bootMat),
+                new Ring(new Vector3(lx, 0.040f * s, 0.08f * s), 0.051f * s * b, 0.040f * s * b, spec.Boots, bootMat),
+                new Ring(new Vector3(lx, 0.036f * s, 0.12f * s), 0.048f * s * b, 0.035f * s * b, spec.Boots, bootMat),
+                new Ring(new Vector3(lx, 0.032f * s, 0.17f * s), 0.040f * s * b, 0.028f * s * b, spec.Boots, bootMat)
             }, 16, footW, Vector3.Up, capStart: true, capEnd: true);
 
             // Pauldron

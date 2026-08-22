@@ -66,7 +66,8 @@ edge, a stride phase that jumps, a head excursion spike during a blend, allocati
   sheet confirmed no freeze mid-swing. The log's `clip` column showed `Draw` after `q` — the auto-draw works.
 
 ## 6. Gotchas
-* Taps: hold for exactly one frame; two frames would double-fire toggles like `n`.
+* Taps: hold for exactly one frame; two frames would double-fire toggles like `n`. Map every letter generically (`Keys.A + (ch - 'a')`) — a missing letter silently becomes an unknown command.
+* `shot label` is taken at the end of the frame in which the *next* step starts, so put an `idle 0.1` between a shot and a following tap or the tap's effect is in the picture.
 * `cam` snaps `_camDist` *and* its goal; otherwise the smoothing lerps back to the old value.
 * Name frames by script time, not frame index, so sheets from different runs line up.
 * The HUD "Controlling X" line is cached per focus — a `focus n` command must refresh the cache key.

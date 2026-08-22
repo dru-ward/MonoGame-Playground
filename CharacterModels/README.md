@@ -38,6 +38,8 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | `Space` | Toggle auto-orbit turntable |
 | `L` / `K` | Rotate the key light |
 | `T` | Cycle wind: still → calm → breezy → gale |
+| `U` | Undress / dress everyone: base-body view (skin-coloured figure, no clothing, armour, headgear or boots; hair, beard and weapon kept) — a mesh rebuild, rig and animation carry on |
+| `Y` | Hide / show the trees (collision, camera and leaf shedding follow) |
 | `N` | Toggle rain (streaks, ground splashes); leaves blow off the broadleaf trees whenever there is wind |
 | `B` | Toggle deferred (many coloured point lights) / forward (MSAA) rendering |
 | `G` | Wireframe |
@@ -60,7 +62,7 @@ opens in Blender).
 `--trees n` number of trees planted around the plaza (0 = none), `--seed n` planting/shape seed,
 `--gallery` one tree of each style in a row behind the characters, `--wind s` wind strength (0 still … 1.3 gale),
 `--perf n` run *n* frames and print average bytes allocated per frame, GC counts and CPU ms (the HUD shows the live figures; the game loop allocates 0 B/frame in Release),
-`--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
+`--undressed` start in base-body view, `--no-trees` start with the trees hidden, `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
 
 ### Scripted play-testing
 
