@@ -421,7 +421,7 @@ public class Game1 : Game
         if (_autoOrbit) _camYaw += dt * 0.25f;
         _camPitch = MathHelper.Clamp(_camPitch, MathHelper.ToRadians(-15), MathHelper.ToRadians(80));
         _camDist = MathHelper.Lerp(_camDist, _camDistGoal, 1 - MathF.Exp(-dt * 6));
-        _camTarget = Vector3.Lerp(_camTarget, _camTargetGoal, 1 - MathF.Exp(-dt * 6));
+        _camTarget = Vector3.Lerp(_camTarget, _camTargetGoal, 1 - MathF.Exp(-dt * (_focus >= 0 ? 10 : 6)));
         _camDistEffective = CameraCollision(_camDist);
 
         if (_focus >= 0) UpdatePlayer(dt, keys);
@@ -491,8 +491,8 @@ public class Game1 : Game
         c.Speed = speed;
         c.Locomotion = c.Move;
 
-        // Camera follows.
-        _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0);
+        // Camera follows, leading the character by a fraction of a second of travel so a sprint stays framed.
+        _camTargetGoal = c.Position + _moveVel * 0.22f + new Vector3(0, c.Spec.Height * 0.55f, 0);
         _autoOrbit = false;
     }
 

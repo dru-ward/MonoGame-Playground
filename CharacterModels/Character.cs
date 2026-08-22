@@ -76,6 +76,17 @@ public sealed class Character
     public float Speed;                 // world m/s
     private float _stridePhase;
     public float StridePhase => _stridePhase;
+
+    // ---- Motion layer: physical reactions on top of the clips (lean into acceleration, bank into turns,
+    // look where you are going). Driven from the actual position/yaw history and spring-smoothed, so it is
+    // reactive without being periodic. Angles in degrees.
+    private Vector3 _prevPos, _velocity;
+    private float _prevYaw;
+    private float _leanFwd, _leanFwdVel, _bank, _bankVel, _look, _lookVel, _dip, _dipVel, _exertion, _breathPhase;
+    private bool _motionPrimed;
+    /// <summary>Scale of the motion layer (0 = off, 1 = default).</summary>
+    public float MotionScale = 1f;
+    public float LeanFwd => _leanFwd; public float Bank => _bank; public float Look => _look;
     private Pose? _locoPose;
     public Clip? Action { get; private set; }
     public Clip? Queued;
@@ -154,9 +165,105 @@ public sealed class Character
         }
         if (Action == null) Player.Play(Locomotion);
         Player.Update(dt);
+        ApplyMotionLayer(dt);
 
         DrawBlend = MathHelper.Lerp(DrawBlend, Drawn ? 1f : 0f, 1 - MathF.Exp(-dt * 14f));
         AttachWeapons();
+    }
+
+    private void ApplyMotionLayer(float dt)
+    {
+        if (!_motionPrimed || dt <= 0f) { _prevPos = Position; _prevYaw = Yaw; _velocity = Vector3.Zero; _motionPrimed = true; return; }
+        dt = MathF.Min(dt, 1f / 30f);
+        var v = (Position - _prevPos) / dt; _prevPos = Position;
+        var accel = (v - _velocity) / dt; _velocity = v;
+        float yawRate = MathHelper.WrapAngle(Yaw - _prevYaw) / dt; _prevYaw = Yaw;
+
+        var fwd = new Vector3(MathF.Sin(Yaw), 0, MathF.Cos(Yaw));
+        var left = new Vector3(fwd.Z, 0, -fwd.X);          // character's left is +X in its own frame
+        float speed = v.Length();
+
+        // The body leans into the acceleration vector, decomposed in its own frame: the forward component pitches the
+        // trunk (a sprint start leans ~10°, a hard stop rocks back), the lateral component banks it (this is also the
+        // centripetal force of a turn, so turning at speed banks into the turn). The head glances toward the turn.
+        float targetLean = MathHelper.Clamp(Vector3.Dot(accel, fwd) * 1.2f, -10f, 12f) + MathHelper.Clamp(speed * 0.6f, 0, 3f);
+        float targetBank = MathHelper.Clamp(Vector3.Dot(accel, left) * 1.0f, -10f, 10f);
+        float targetLook = MathHelper.Clamp(MathHelper.ToDegrees(yawRate) * 0.12f, -28f, 28f);
+        // Weight drop: braking hard sinks into the knees (metres), released as the body settles.
+        float targetDip = MathHelper.Clamp(-Vector3.Dot(accel, fwd) * 0.006f, 0f, 0.07f);
+        // Exertion builds while running (above walking pace) and decays over ~5 s; it drives heavier, faster breathing.
+        float effort = MathHelper.Clamp((speed - 1.8f) / 2.6f, 0f, 1f);
+        _exertion = effort > _exertion ? MathHelper.Lerp(_exertion, effort, 1 - MathF.Exp(-dt * 0.6f)) : MathHelper.Lerp(_exertion, 0f, 1 - MathF.Exp(-dt * 0.2f));
+        _breathPhase += dt * MathHelper.TwoPi * MathHelper.Lerp(0.25f, 0.75f, _exertion);
+
+        // Damped springs: stiff enough to feel connected, damped enough (ζ≈0.85) that nothing oscillates.
+        Spring(ref _leanFwd, ref _leanFwdVel, targetLean * MotionScale, 2.6f, 0.85f, dt);
+        Spring(ref _bank, ref _bankVel, targetBank * MotionScale, 2.2f, 0.8f, dt);
+        Spring(ref _look, ref _lookVel, targetLook * MotionScale, 1.8f, 0.9f, dt);
+        Spring(ref _dip, ref _dipVel, targetDip * MotionScale, 2.0f, 0.75f, dt);
+
+        // Distribute over the spine: hips least, chest most; the head counter-rotates to stay level and looks into the turn.
+        AddUpright("hips", _leanFwd * 0.25f, _bank * 0.35f, 0);
+        AddUpright("spine", _leanFwd * 0.35f, _bank * 0.35f, _look * 0.15f);
+        AddUpright("chest", _leanFwd * 0.4f, _bank * 0.3f, _look * 0.25f);
+        AddUpright("neck", -_leanFwd * 0.3f, -_bank * 0.4f, _look * 0.25f);
+        AddUpright("head", -_leanFwd * 0.4f, -_bank * 0.5f, _look * 0.35f);
+
+        // Knee dip: root sinks, knees bend, trunk compensates forward a touch.
+        if (_dip > 0.001f)
+        {
+            float knee = _dip * 260f;                       // 7 cm -> ~18°
+            Skeleton[0].Translation += new Vector3(0, -_dip, 0);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                string L = side > 0 ? "L" : "R";
+                AddHang(BoneNames.Of("thigh", L), knee * 0.55f);
+                AddHang(BoneNames.Of("shin", L), -knee);
+                AddHang(BoneNames.Of("foot", L), knee * 0.45f);
+            }
+            AddUpright("spine", knee * 0.25f, 0, 0);
+        }
+        // Exertion breathing: chest heaves, shoulders rise, a slight slump — fades as the character recovers.
+        if (_exertion > 0.02f)
+        {
+            float b = MathF.Sin(_breathPhase) * _exertion;
+            AddUpright("chest", 3.5f * b + 3f * _exertion, 0, 0);
+            AddUpright("spine", 1.5f * b, 0, 0);
+            AddUpright("neck", -2f * b - 2f * _exertion, 0, 0);
+            AddUpright("head", -2f * b, 0, 0);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                string L = side > 0 ? "L" : "R";
+                AddHang(BoneNames.Of("clav", L), 0, (2.5f * b + 1.5f * _exertion) * side);
+                AddHang(BoneNames.Of("arm", L), 0, (2f * b + 2f * _exertion) * side);
+            }
+        }
+        Skeleton.Update();
+    }
+
+    private static void Spring(ref float x, ref float vel, float target, float hz, float zeta, float dt)
+    {
+        float w = MathHelper.TwoPi * hz;
+        vel += ((target - x) * w * w - vel * 2f * zeta * w) * dt;
+        x += vel * dt;
+    }
+
+    /// <summary>Adds a limb-style rotation (degrees; forward = swing toward +Z, outward = abduct; side = +1 L, -1 R).</summary>
+    private void AddHang(string bone, float forward, float outwardSigned = 0f)
+    {
+        if (!Skeleton.Has(bone)) return;
+        var b = Skeleton[bone];
+        var extra = Quaternion.CreateFromRotationMatrix(Matrix.CreateRotationX(MathHelper.ToRadians(-forward)) * Matrix.CreateRotationZ(MathHelper.ToRadians(outwardSigned)));
+        b.Rotation = extra * b.Rotation;
+    }
+
+    /// <summary>Adds a spine-style rotation (degrees; same conventions as PoseWriter.Upright) on top of the animated pose.</summary>
+    private void AddUpright(string bone, float lean, float tilt, float twist)
+    {
+        if (!Skeleton.Has(bone)) return;
+        var b = Skeleton[bone];
+        var extra = Quaternion.CreateFromYawPitchRoll(MathHelper.ToRadians(twist), MathHelper.ToRadians(lean), MathHelper.ToRadians(-tilt));
+        b.Rotation = extra * b.Rotation;
     }
 
     /// <summary>Weapon bones follow the hand when drawn and the sheath socket when holstered (blended while swapping).</summary>

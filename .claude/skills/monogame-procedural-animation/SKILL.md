@@ -133,3 +133,32 @@ What fixed it:
   9/s exponential approach capped at 540°/s.
 * MonoGame fixed-step catch-up after a long load runs many `Update`s before the first `Draw`; headless tests
   that "hold a key" must assert it inside `Update`, not only in a warm-up loop, or the screenshot shows idle.
+
+## Motion layer: why speed-blended gaits still look rigid, and what fixes it
+A perfectly periodic gait with a steady torso reads as a mannequin on rails. The missing part is everything a
+body does *in reaction to its own movement*. Add a post-clip layer driven from the character's actual
+position/yaw history (not from input), spring-smoothed so it is reactive but never periodic:
+* **Lean into the acceleration vector, decomposed in the body frame**: forward component → trunk pitch
+  (1.2°/(m/s²), clamp −10..12: a sprint start leans ~10°, a hard stop rocks back), lateral component → bank
+  (1°/(m/s²), ±10). Lateral acceleration *is* the centripetal force of a turn, so banking into turns falls out
+  for free. Projecting onto the *facing* instead was wrong: during a 90° start the facing swings while velocity
+  builds, producing a backward lean while accelerating.
+* **Look into the turn**: head/neck/chest twist from yaw rate (0.12°/(°/s), ±28°).
+* **Weight drop on braking**: root sinks `clamp(−a_fwd × 0.006, 0, 7 cm)`, knees bend ~260°/m of dip, trunk
+  compensates — the stop no longer snaps upright.
+* **Exertion breathing**: an effort value rises while above walking pace (τ≈1.7 s) and decays (τ≈5 s);
+  it drives breath rate 0.25→0.75 Hz, chest heave ±3.5°, shoulder rise, a slight slump. After a sprint the
+  character visibly recovers instead of freezing.
+* Distribute each angle over hips/spine/chest (≈0.25/0.35/0.4) and counter-rotate neck/head (−0.3/−0.4) so
+  the gaze stays level. Springs: 2–2.6 Hz, ζ 0.75–0.9. Apply after the animation player, then `Skeleton.Update()` again.
+* **Life noise** in the clips: `Life(t, seed)` = three incommensurate sines; idle gets slow weight shifts
+  (hips tilt/twist, root 1.2 cm, unloaded knee bends), glances (head ±8°), wrist/finger drift; locomotion gets
+  ±8 % arm-swing asymmetry, wrists trailing the swing, clavicles riding forward/up with the arm.
+* **Follow-through springs** were too stiff after the wobble fix: arms 5 Hz / forearms 4.2 / hands 3.5 / head 4,
+  ζ 0.7 — one small visible overshoot on stops and turns, no ringing; trunk and legs still unsprung.
+* Camera: lead the target by `velocity × 0.22 s` and follow at 10/s while controlling, or a sprint drifts out of frame.
+* Measured: walk head excursion unchanged (4.2 cm lateral), run 5.4 / 3.6 cm where the fore-aft is the breathing.
+
+Playtest gotcha: a "character stands still while W is held" strip was a *collision* — he ran into the
+character standing beside him and the displacement-driven animation correctly idled. Check the path before
+blaming the animation.

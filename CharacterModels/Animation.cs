@@ -173,7 +173,7 @@ public sealed class AnimationPlayer
     private float _blend = 1f, _time, _prevTime;
     private bool _primed;
     public float BlendDuration = 0.4f;
-    public float Damping = 0.82f;
+    public float Damping = 0.7f;   // ζ: 0.7 gives one small visible overshoot on stops/turns without ringing
     public float TimeOffset;
     public Clip? Current => _current;
     /// <summary>Time into the current clip (one-shots start at 0).</summary>
@@ -189,11 +189,11 @@ public sealed class AnimationPlayer
         {
             string n = skel[i].Name;
             // Extremities lag and overshoot a little (follow-through); legs stay crisp so feet read as planted.
-            _omega[i] = n.StartsWith("hand") ? MathHelper.TwoPi * 5.5f
-                      : n.StartsWith("fore") ? MathHelper.TwoPi * 7f
-                      : n.StartsWith("arm") ? MathHelper.TwoPi * 8.5f
-                      : n == "head" ? MathHelper.TwoPi * 5f
-                      : n == "neck" ? MathHelper.TwoPi * 7f
+            _omega[i] = n.StartsWith("hand") ? MathHelper.TwoPi * 3.5f
+                      : n.StartsWith("fore") ? MathHelper.TwoPi * 4.2f
+                      : n.StartsWith("arm") ? MathHelper.TwoPi * 5f
+                      : n == "head" ? MathHelper.TwoPi * 4f
+                      : n == "neck" ? MathHelper.TwoPi * 6f
                       : 0f;   // trunk, pelvis and legs are never sprung: a lagging spine reads as wobble
         }
     }
@@ -290,25 +290,35 @@ public static class Clips
     private static float Pos(float x, float k = 0.12f) => 0.5f * (x + MathF.Sqrt(x * x + k * k));
     public static float Smooth01(float x) { x = MathHelper.Clamp(x, 0, 1); return x * x * (3 - 2 * x); }
 
+    /// <summary>Smooth, non-repeating -1..1 "life" noise from incommensurate sines; seed shifts the phase per use.</summary>
+    public static float Life(float t, float seed) =>
+        0.5f * MathF.Sin(t * 0.83f + seed) + 0.3f * MathF.Sin(t * 1.71f + seed * 1.7f + 0.9f) + 0.2f * MathF.Sin(t * 2.93f + seed * 2.3f + 2.1f);
+
     public static readonly Clip BindPose = new("Bind pose", (t, w) => { });
 
     public static readonly Clip Idle = new("Idle", (t, w) =>
     {
         float breath = MathF.Sin(t * 1.6f);
         float sway = MathF.Sin(t * 0.45f);
-        w.Root(new Vector3(0.004f * sway, 0.003f * breath, 0));
-        w.Upright("spine", 1.0f + 0.8f * breath, 1.2f * sway, 2f * sway);
-        w.Upright("chest", 1.5f * breath, 0, -1.5f * sway);
-        w.Upright("neck", -2f * breath, 0, 0);
-        w.Upright("head", 3f * MathF.Sin(t * 0.7f), 2f * MathF.Sin(t * 0.33f), 9f * MathF.Sin(t * 0.5f));
+        float shift = Life(t * 0.35f, 1f);                       // slow weight shift from foot to foot
+        float glance = Life(t * 0.5f, 2f);                       // occasional look around
+        w.Root(new Vector3(0.004f * sway + 0.012f * shift, 0.003f * breath - 0.004f * MathF.Abs(shift), 0));
+        w.Upright("hips", 0, 2.5f * shift, 1.5f * shift);
+        w.Upright("spine", 1.0f + 0.8f * breath, 1.2f * sway - 1.5f * shift, 2f * sway + 1.5f * Life(t, 3f));
+        w.Upright("chest", 1.5f * breath, -0.8f * shift, -1.5f * sway);
+        w.Upright("neck", -2f * breath, 0, 4f * glance);
+        w.Upright("head", 3f * MathF.Sin(t * 0.7f) + 2f * Life(t * 0.7f, 4f), 2f * MathF.Sin(t * 0.33f), 9f * MathF.Sin(t * 0.5f) + 8f * glance);
         for (int s = -1; s <= 1; s += 2)
         {
             string L = s > 0 ? "L" : "R";
-            w.Hang(BoneNames.Of("arm", L), 3f + 2f * sway, 7f + 1.5f * breath, s);
-            w.Hang(BoneNames.Of("fore", L), 14f + 2f * breath, 2f, s);
-            w.Hang(BoneNames.Of("hand", L), -5f, 0, s);
-            w.Hang(BoneNames.Of("thigh", L), 0.5f, 2.5f, s);
-            w.Hang(BoneNames.Of("shin", L), -3f, 0, s);
+            float life = Life(t * 0.9f, 5f + s);
+            w.Hang(BoneNames.Of("arm", L), 3f + 2f * sway + 1.5f * life, 7f + 1.5f * breath + 1f * life, s);
+            w.Hang(BoneNames.Of("fore", L), 14f + 2f * breath + 2f * Life(t * 0.8f, 6f + s), 2f, s);
+            w.Hang(BoneNames.Of("hand", L), -5f + 4f * Life(t * 0.6f, 7f + s), 0, s, 6f * Life(t * 0.5f, 8f + s));
+            // The unloaded leg bends a little as the weight shifts away from it.
+            float unload = MathF.Max(0, -shift * s);
+            w.Hang(BoneNames.Of("thigh", L), 0.5f + 3f * unload, 2.5f, s);
+            w.Hang(BoneNames.Of("shin", L), -3f - 5f * unload, 0, s);
             w.Hang(BoneNames.Of("clav", L), 0, 1f * breath, s);
         }
     });
@@ -380,13 +390,17 @@ public static class Clips
             w.Hang(BoneNames.Of("shin", L), -knee, 0, side);
             w.Foot(BoneNames.Of("foot", L), ankle, side, 0, toe);
 
-            // Arms swing opposite the same-side leg; the elbow bends more on the forward swing.
-            float armF = -(hip - 6f) * armSwing / 24f;
+            // Arms swing opposite the same-side leg; the elbow bends more on the forward swing. A little life noise
+            // keeps the two arms from being mirror images, and the wrist trails the swing.
+            float life = Life(u * 1.3f, 9f + side);
+            float armF = -(hip - 6f) * armSwing / 24f * (1f + 0.08f * life);
             float elbow = elbowBase + elbowSwing * Pos(armF / armSwing, 0.4f);
-            w.Hang(BoneNames.Of("arm", L), armF, 6f, side);
+            float swingDir = -MathF.Sin(MathHelper.TwoPi * p);                // +1 when the arm is swinging forward
+            w.Hang(BoneNames.Of("arm", L), armF, 6f + 1.5f * life, side);
             w.Hang(BoneNames.Of("fore", L), elbow, 3f, side);
-            w.Hang(BoneNames.Of("hand", L), -4f, 0, side);
-            w.Hang(BoneNames.Of("clav", L), 0, 1.5f * MathF.Sin(MathHelper.TwoPi * p), side);
+            w.Hang(BoneNames.Of("hand", L), -4f - 8f * swingDir * (armSwing / 24f), 0, side, 4f * swingDir);
+            // Shoulder girdle: the clavicle rides forward with the arm swing and rises at push-off.
+            w.Hang(BoneNames.Of("clav", L), 3f * armF / 24f, 1.5f * MathF.Sin(MathHelper.TwoPi * p) + 1.0f, side);
         }
     }
 
