@@ -170,3 +170,17 @@ Humans cancel it in the lumbar spine. Counter-tilt: `spine tilt = +pelvisDrop ×
 `chest tilt = +pelvisDrop × 0.4 × s1` (hips stay at `−pelvisDrop × s1`, so the legs and belt still show the
 drop), root lateral sway ≤ 2 mm. Result: 1.6 / 2.0 / 2.3 cm at walk / blend / run, the rest being shoulder
 motion. Same idea as the pelvis-yaw counter-rotation already applied for the shoulders.
+
+## Jumping (state-driven pose, no keyframes)
+* Physics in the character: `Jump()` starts a 90 ms anticipation (the motion layer's dip is forced to 5 cm),
+  then `VerticalVelocity = 5.2`, `Gravity = 15` (≈0.9 m apex, ≈0.7 s airborne — game-feel values, not 9.8),
+  `Position.Y` integrated, landing when `Y <= 0`. Horizontal control in the air ×0.25 and no turning.
+* The airborne clip reads the state instead of time: `f = clamp(vy / jumpSpeed, -1, 1)` gives rise/fall
+  weights; lead leg tucked (thigh 55°, shin −95°) and trail leg extended on the rise, both knees forward and
+  bent for the fall, arms up-and-back on launch → out at the apex → forward to brace, head looks down into
+  the landing. Played as the locomotion clip while `Airborne` with a 0.12 s blend both ways.
+* Landing: add `impact × 0.12` to the dip spring velocity (the same brake-dip used for stops) and snap the
+  stride phase to double support; the spring releases the crouch naturally. Launch gives the dip spring a
+  negative velocity so the legs visibly extend.
+* Animation speed comes from the **xz** displacement only, or the fall reads as a sprint.
+* Camera target stays at ground height so the character rises in frame instead of the camera bobbing.

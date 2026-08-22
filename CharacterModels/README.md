@@ -36,6 +36,7 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | `V` | "Varied" — each character plays a different clip |
 | `F` / `Tab` | Focus the next character **and take control of it** (cycles back to the overview) |
 | `W A S D` | Move the controlled character (camera-relative) · hold `Shift` to run |
+| `Space` | Jump while controlling a character (short crouch, ~0.9 m leap, reduced air control, landing dip); toggles auto-orbit in the overview |
 | `H` | Draw / sheathe the weapon (reach to the back or hip sockets) |
 | `Q` / `E` / `X` | Attack (auto-draws first) / wave / dance (cancelled by moving) |
 | Mouse drag / arrows | Orbit camera · right-drag pans · wheel zooms |

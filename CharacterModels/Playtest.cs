@@ -134,18 +134,18 @@ public sealed class PlaytestRecorder : IDisposable
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(logPath))!);
             _log = new StreamWriter(logPath);
-            _log.WriteLine("t,step,x,z,speed,yaw_deg,stride_phase,head_lat_cm,head_fwd_cm,lean,bank,look,clip,alloc_bytes,cpu_ms");
+            _log.WriteLine("t,step,x,z,speed,yaw_deg,stride_phase,head_lat_cm,head_fwd_cm,lean,bank,look,y,vy,clip,alloc_bytes,cpu_ms");
         }
     }
 
     public void Log(float t, string step, Character? c, long alloc, double cpuMs)
     {
         if (_log == null) return;
-        if (c == null) { _log.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{t:0.000},{step},,,,,,,,,,,,{alloc},{cpuMs:0.00}")); return; }
+        if (c == null) { _log.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{t:0.000},{step},,,,,,,,,,,,,,{alloc},{cpuMs:0.00}")); return; }
         var hips = c.Skeleton["hips"].World.Translation; var head = c.Skeleton["head"].World.Translation;
         var rel = Vector3.TransformNormal(head - hips, Matrix.CreateRotationY(-c.Yaw));
         _log.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"{t:0.000},{step},{c.Position.X:0.000},{c.Position.Z:0.000},{c.Speed:0.00},{MathHelper.ToDegrees(c.Yaw):0.0},{c.StridePhase:0.00},{rel.X * 100:0.0},{rel.Z * 100:0.0},{c.LeanFwd:0.0},{c.Bank:0.0},{c.Look:0.0},{c.Player.Current?.Name},{alloc},{cpuMs:0.00}"));
+            $"{t:0.000},{step},{c.Position.X:0.000},{c.Position.Z:0.000},{c.Speed:0.00},{MathHelper.ToDegrees(c.Yaw):0.0},{c.StridePhase:0.00},{rel.X * 100:0.0},{rel.Z * 100:0.0},{c.LeanFwd:0.0},{c.Bank:0.0},{c.Look:0.0},{c.Position.Y:0.00},{c.VerticalVelocity:0.0},{c.Player.Current?.Name},{alloc},{cpuMs:0.00}"));
     }
 
     /// <summary>Call after the frame is rendered into target; saves when the interval has elapsed.</summary>

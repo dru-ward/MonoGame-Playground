@@ -73,6 +73,15 @@ public sealed class Character
     /// Idle, walk and run share one continuously integrated stride phase, so changing speed never cross-fades
     /// two out-of-phase cycles (the source of the old back-and-forth wobble).</summary>
     public Clip Move { get; private set; } = null!;
+    /// <summary>Airborne pose driven by the jump state (see <see cref="Jump"/>); used as the locomotion clip while in the air.</summary>
+    public Clip JumpClip { get; private set; } = null!;
+    // ---- Jump state (vertical motion is integrated here; the game moves xz).
+    public bool Airborne;
+    public float VerticalVelocity;
+    public float JumpSpeed = 5.2f, Gravity = 15f;      // ~0.9 m apex, ~0.7 s in the air: snappy, game-like
+    private float _jumpAnticipation = -1f;             // >=0: crouching before launch
+    private float _airTime;
+    public float AirTime => _airTime;
     public float Speed;                 // world m/s
     private float _stridePhase;
     public float StridePhase => _stridePhase;
@@ -125,9 +134,47 @@ public sealed class Character
         return Clips.Reach(Skeleton, reaches, 0.9f);
     }
 
+    /// <summary>Starts a jump: a 90 ms crouch, then launch. Ignored while airborne or busy with an action.</summary>
+    public void Jump()
+    {
+        if (Airborne || _jumpAnticipation >= 0f) return;
+        CancelAction();
+        _jumpAnticipation = 0f;
+    }
+
     /// <summary>Builds the speed-driven Move clip; needs the skeleton (CharacterBuilder calls it).</summary>
     public void InitMove()
     {
+        JumpClip = new Clip("Jump", (t, w) =>
+        {
+            // f: +1 rising hard … 0 at the apex … -1 falling fast.
+            float f = MathHelper.Clamp(VerticalVelocity / JumpSpeed, -1f, 1f);
+            float rise = MathF.Max(0, f), fall = MathF.Max(0, -f);
+            float spread = 1f - MathF.Abs(f) * 0.5f;                    // limbs open out around the apex
+            w.Root(new Vector3(0, 0, 0));
+            w.Upright("hips", 6f * rise - 4f * fall, 0, 0);
+            w.Upright("spine", 6f * rise + 2f * fall, 0, 0);
+            w.Upright("chest", 4f * rise - 2f * fall, 0, 0);
+            w.Upright("neck", -4f * rise + 6f * fall, 0, 0);
+            w.Upright("head", -6f * rise + 10f * fall, 0, 0);           // looks down at the landing
+            for (int s = -1; s <= 1; s += 2)
+            {
+                string L = s > 0 ? "L" : "R";
+                // Arms: thrown up and back on launch, out to the sides at the apex, forward to brace for landing.
+                w.Hang(BoneNames.Of("arm", L), -35f * rise + 30f * fall, 25f + 40f * spread, s);
+                w.Hang(BoneNames.Of("fore", L), 20f + 30f * rise, 10f, s);
+                w.Hang(BoneNames.Of("hand", L), -10f, 0, s);
+                w.Hang(BoneNames.Of("clav", L), 0, 6f * spread, s);
+                // Legs: lead leg tucked, trail leg extended on the rise; both coming forward with bent knees for the fall.
+                bool lead = s > 0;
+                float thigh = lead ? 55f * rise + 35f * (1 - rise) : -30f * rise + 30f * (1 - rise);
+                float shin = lead ? -95f * rise - 60f * (1 - rise) : -15f * rise - 70f * (1 - rise);
+                w.Hang(BoneNames.Of("thigh", L), thigh, 6f, s);
+                w.Hang(BoneNames.Of("shin", L), shin, 0, s);
+                w.Foot(BoneNames.Of("foot", L), lead ? -20f * rise + 10f * fall : -30f + 15f * fall, s);
+            }
+        });
+
         _locoPose = new Pose(Skeleton.Count);
         Move = new Clip("Move", (t, w) =>
         {
@@ -163,12 +210,45 @@ public sealed class Character
                 if (Queued != null) { var q = Queued; Queued = null; PlayAction(q); }
             }
         }
-        if (Action == null) Player.Play(Locomotion);
+        UpdateJump(dt);
+        if (Action == null) Player.Play(Airborne ? JumpClip : Locomotion);
+        Player.BlendDuration = Airborne || _airTime > 0f && _airTime < 0.3f ? 0.12f : 0.4f;
         Player.Update(dt);
         ApplyMotionLayer(dt);
 
         DrawBlend = MathHelper.Lerp(DrawBlend, Drawn ? 1f : 0f, 1 - MathF.Exp(-dt * 14f));
         AttachWeapons();
+    }
+
+    private void UpdateJump(float dt)
+    {
+        if (_jumpAnticipation >= 0f)
+        {
+            _jumpAnticipation += dt;
+            _dip = MathF.Max(_dip, 0.05f * MathF.Min(1f, _jumpAnticipation / 0.09f));    // pre-jump crouch via the motion layer
+            if (_jumpAnticipation >= 0.09f)
+            {
+                _jumpAnticipation = -1f;
+                Airborne = true; VerticalVelocity = JumpSpeed; _airTime = 0f;
+                _dipVel = -0.6f;                                                       // spring back up as the legs extend
+            }
+        }
+        if (Airborne)
+        {
+            VerticalVelocity -= Gravity * dt;
+            Position.Y += VerticalVelocity * dt;
+            _airTime += dt;
+            if (Position.Y <= 0f)
+            {
+                // Landing: drop into the knees in proportion to the impact speed; the spring releases it.
+                float impact = -VerticalVelocity;
+                Position.Y = 0f; Airborne = false; VerticalVelocity = 0f;
+                _dipVel += impact * 0.12f;
+                _stridePhase = MathF.Round(_stridePhase * 2f) / 2f;
+            }
+        }
+        else if (_airTime > 0f) _airTime += dt;     // keeps counting briefly after landing so the blend back is fast
+        if (_airTime > 0.5f && !Airborne) _airTime = 0f;
     }
 
     private void ApplyMotionLayer(float dt)

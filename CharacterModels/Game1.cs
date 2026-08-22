@@ -433,7 +433,7 @@ public class Game1 : Game
         bool Pressed(Keys k) => keys.IsKeyDown(k) && !_prevKeys.IsKeyDown(k);
 
         if (keys.IsKeyDown(Keys.Escape)) Exit();
-        if (Pressed(Keys.Space)) _autoOrbit = !_autoOrbit;
+        if (Pressed(Keys.Space)) { if (_focus >= 0) _characters[_focus].Jump(); else _autoOrbit = !_autoOrbit; }
         if (Pressed(Keys.G)) _wireframe = !_wireframe;
         if (Pressed(Keys.B)) _useDeferred = !_useDeferred;
         if (Pressed(Keys.N)) _weather.Raining = !_weather.Raining;
@@ -523,10 +523,11 @@ public class Game1 : Game
         float walkOpt = Program.Opt("walk", 0);
         var targetVel = moving ? input * (walkOpt > 1 ? walkOpt : run ? RunSpeed : WalkSpeed) : Vector3.Zero;
         float accel = moving ? 7f : 10f;
+        if (c.Airborne) accel *= 0.25f;                          // limited air control, momentum carries
         _moveVel = Vector3.Lerp(_moveVel, targetVel, 1 - MathF.Exp(-dt * accel));
         float speed = _moveVel.Length();
 
-        if (moving)
+        if (moving && !c.Airborne)
         {
             // Turn toward the input direction (not the smoothed velocity, which lags and makes the body hunt).
             float targetYaw = MathF.Atan2(input.X, input.Z);
@@ -541,7 +542,7 @@ public class Game1 : Game
         c.Position.Z = MathHelper.Clamp(c.Position.Z, -MapHalf + 0.5f, MapHalf - 0.5f);
         // Animate from the displacement that actually happened (after collision and world bounds), so feet never
         // run on the spot against a trunk or the edge of the map. Smoothed to hide per-frame jitter.
-        float actual = dt > 0 ? Vector3.Distance(before, c.Position) / dt : 0f;
+        float actual = dt > 0 ? new Vector2(c.Position.X - before.X, c.Position.Z - before.Z).Length() / dt : 0f;
         _actualSpeed = MathHelper.Lerp(_actualSpeed, actual, 1 - MathF.Exp(-dt * 15f));
         speed = MathF.Min(speed, _actualSpeed);
 
@@ -550,7 +551,8 @@ public class Game1 : Game
         c.Locomotion = c.Move;
 
         // Camera follows, leading the character by a fraction of a second of travel so a sprint stays framed.
-        _camTargetGoal = c.Position + _moveVel * 0.22f + new Vector3(0, c.Spec.Height * 0.55f, 0);
+        // Target the ground position (not the jump height): the character rises in frame instead of the camera bobbing with them.
+        _camTargetGoal = new Vector3(c.Position.X, 0, c.Position.Z) + _moveVel * 0.22f + new Vector3(0, c.Spec.Height * 0.55f, 0);
         _autoOrbit = false;
     }
 
@@ -934,7 +936,7 @@ public class Game1 : Game
         {
             if (_hudControlFocus != _focus)
             {
-                _hudLinesControl[0] = $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance";
+                _hudLinesControl[0] = $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   Space  jump   H draw / sheathe weapon   Q attack   E wave   X dance";
                 _hudControlFocus = _focus;
             }
             lines = _hudLinesControl;
