@@ -80,6 +80,7 @@ public class Game1 : Game
     private float _camDistGoal = 6.0f;
     private float _camDistEffective = 6.0f;   // _camDist after pulling in for trees / ground
     private bool _autoOrbit = true;
+    private float _camInvert = -1f;            // -1 = inverted orbit controls (default), +1 = direct
     private int _focus = -1;
 
     // Lighting
@@ -202,6 +203,7 @@ public class Game1 : Game
         _camDist = _camDistGoal = Program.Opt("dist", 6);
         _lightYaw = MathHelper.ToRadians(Program.Opt("light", 35));
         if (Program.Flag("no-orbit")) _autoOrbit = false;
+        if (Program.Flag("no-invert")) _camInvert = 1f;
         int focus = (int)Program.Opt("focus", -1);
         if (focus >= 0 && focus < _characters.Count) FocusOn(focus);
         int clip = (int)Program.Opt("clip", 1);
@@ -458,14 +460,16 @@ public class Game1 : Game
 
         // Camera control
         float orbitSpeed = 1.5f * dt;
-        if (keys.IsKeyDown(Keys.Left)) _camYaw -= orbitSpeed;
-        if (keys.IsKeyDown(Keys.Right)) _camYaw += orbitSpeed;
-        if (keys.IsKeyDown(Keys.Up)) _camPitch += orbitSpeed * 0.6f;
-        if (keys.IsKeyDown(Keys.Down)) _camPitch -= orbitSpeed * 0.6f;
+        // Camera controls are inverted by default (drag/arrow left turns the view right, up looks down); --no-invert restores the old feel.
+        float inv = _camInvert;
+        if (keys.IsKeyDown(Keys.Left)) _camYaw -= orbitSpeed * inv;
+        if (keys.IsKeyDown(Keys.Right)) _camYaw += orbitSpeed * inv;
+        if (keys.IsKeyDown(Keys.Up)) _camPitch += orbitSpeed * 0.6f * inv;
+        if (keys.IsKeyDown(Keys.Down)) _camPitch -= orbitSpeed * 0.6f * inv;
         if (IsActive && mouse.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Pressed)
         {
-            _camYaw += (mouse.X - _prevMouse.X) * 0.006f;
-            _camPitch += (mouse.Y - _prevMouse.Y) * 0.004f;
+            _camYaw += (mouse.X - _prevMouse.X) * 0.006f * inv;
+            _camPitch += (mouse.Y - _prevMouse.Y) * 0.004f * inv;
             _autoOrbit = false;
         }
         if (IsActive && mouse.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Pressed)

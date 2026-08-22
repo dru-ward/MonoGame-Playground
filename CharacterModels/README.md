@@ -39,7 +39,7 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | `Space` | Jump while controlling a character (short crouch, ~0.9 m leap, reduced air control, landing dip); toggles auto-orbit in the overview |
 | `H` | Draw / sheathe the weapon (reach to the back or hip sockets) |
 | `Q` / `E` / `X` | Attack (auto-draws first) / wave / dance (cancelled by moving) |
-| Mouse drag / arrows | Orbit camera · right-drag pans · wheel zooms |
+| Mouse drag / arrows | Orbit camera (inverted: drag left turns the view right, drag up looks down; `--no-invert` for direct) · right-drag pans · wheel zooms |
 | `Space` | Toggle auto-orbit turntable |
 | `L` / `K` | Rotate the key light |
 | `T` | Cycle wind: still → calm → breezy → gale |
