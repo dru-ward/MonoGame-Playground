@@ -67,7 +67,7 @@ public readonly struct PoseWriter
     {
         if (!_skel.Has(bone)) return;
         _pose.Rotations[_skel[bone].Index] = Quaternion.CreateFromYawPitchRoll(0, Rad(-toeUp), Rad(roll * side));
-        string toe = bone.Replace("foot", "toe");
+        string toe = BoneNames.Toe(bone);
         if (_skel.Has(toe)) _pose.Rotations[_skel[toe].Index] = Quaternion.CreateFromYawPitchRoll(0, Rad(-toeBend), 0);
     }
 
@@ -94,8 +94,8 @@ public readonly struct PoseWriter
     public void ArmIK(int side, Vector3 target, Vector3 elbowHint, float weight = 1f)
     {
         string L = side > 0 ? "L" : "R";
-        if (!_skel.Has("arm" + L) || weight <= 0) return;
-        var arm = _skel["arm" + L]; var fore = _skel["fore" + L]; var hand = _skel["hand" + L];
+        if (!_skel.Has(BoneNames.Of("arm", L)) || weight <= 0) return;
+        var arm = _skel[BoneNames.Of("arm", L)]; var fore = _skel[BoneNames.Of("fore", L)]; var hand = _skel[BoneNames.Of("hand", L)];
         float l1 = fore.LocalOffset.Length(), l2 = hand.LocalOffset.Length();
 
         var parentWorld = WorldOf(arm.Parent);
@@ -129,6 +129,26 @@ public readonly struct PoseWriter
         int ia = arm.Index, ifo = fore.Index;
         _pose.Rotations[ia] = weight >= 1 ? qArm : Quaternion.Slerp(_pose.Rotations[ia], qArm, weight);
         _pose.Rotations[ifo] = weight >= 1 ? qFore : Quaternion.Slerp(_pose.Rotations[ifo], qFore, weight);
+    }
+}
+
+/// <summary>
+/// Side-suffixed bone names without per-call string concatenation: "arm" + "L" allocates a new string every
+/// evaluation (dozens per character per frame). The cache turns it into one dictionary lookup on a value-tuple key.
+/// </summary>
+public static class BoneNames
+{
+    private static readonly Dictionary<(string, string), string> _side = new();
+    private static readonly Dictionary<string, string> _toe = new();
+    public static string Of(string prefix, string side)
+    {
+        if (!_side.TryGetValue((prefix, side), out var n)) { n = prefix + side; _side[(prefix, side)] = n; }
+        return n;
+    }
+    public static string Toe(string footBone)
+    {
+        if (!_toe.TryGetValue(footBone, out var n)) { n = footBone.Replace("foot", "toe"); _toe[footBone] = n; }
+        return n;
     }
 }
 
@@ -284,12 +304,12 @@ public static class Clips
         for (int s = -1; s <= 1; s += 2)
         {
             string L = s > 0 ? "L" : "R";
-            w.Hang("arm" + L, 3f + 2f * sway, 7f + 1.5f * breath, s);
-            w.Hang("fore" + L, 14f + 2f * breath, 2f, s);
-            w.Hang("hand" + L, -5f, 0, s);
-            w.Hang("thigh" + L, 0.5f, 2.5f, s);
-            w.Hang("shin" + L, -3f, 0, s);
-            w.Hang("clav" + L, 0, 1f * breath, s);
+            w.Hang(BoneNames.Of("arm", L), 3f + 2f * sway, 7f + 1.5f * breath, s);
+            w.Hang(BoneNames.Of("fore", L), 14f + 2f * breath, 2f, s);
+            w.Hang(BoneNames.Of("hand", L), -5f, 0, s);
+            w.Hang(BoneNames.Of("thigh", L), 0.5f, 2.5f, s);
+            w.Hang(BoneNames.Of("shin", L), -3f, 0, s);
+            w.Hang(BoneNames.Of("clav", L), 0, 1f * breath, s);
         }
     });
 
@@ -356,17 +376,17 @@ public static class Clips
             float p = side > 0 ? u : u + 0.5f;
             float hip = Mix(Key(p, a.Hip), Key(p, b.Hip)), knee = Mix(Key(p, a.Knee), Key(p, b.Knee));
             float ankle = Mix(Key(p, a.Ankle), Key(p, b.Ankle)), toe = Mix(Key(p, a.Toe), Key(p, b.Toe));
-            w.Hang("thigh" + L, hip + lean * 0.3f, 2.5f, side);
-            w.Hang("shin" + L, -knee, 0, side);
-            w.Foot("foot" + L, ankle, side, 0, toe);
+            w.Hang(BoneNames.Of("thigh", L), hip + lean * 0.3f, 2.5f, side);
+            w.Hang(BoneNames.Of("shin", L), -knee, 0, side);
+            w.Foot(BoneNames.Of("foot", L), ankle, side, 0, toe);
 
             // Arms swing opposite the same-side leg; the elbow bends more on the forward swing.
             float armF = -(hip - 6f) * armSwing / 24f;
             float elbow = elbowBase + elbowSwing * Pos(armF / armSwing, 0.4f);
-            w.Hang("arm" + L, armF, 6f, side);
-            w.Hang("fore" + L, elbow, 3f, side);
-            w.Hang("hand" + L, -4f, 0, side);
-            w.Hang("clav" + L, 0, 1.5f * MathF.Sin(MathHelper.TwoPi * p), side);
+            w.Hang(BoneNames.Of("arm", L), armF, 6f, side);
+            w.Hang(BoneNames.Of("fore", L), elbow, 3f, side);
+            w.Hang(BoneNames.Of("hand", L), -4f, 0, side);
+            w.Hang(BoneNames.Of("clav", L), 0, 1.5f * MathF.Sin(MathHelper.TwoPi * p), side);
         }
     }
 
@@ -385,18 +405,27 @@ public static class Clips
         w.Upright("chest", 0, 4f * raise, -6f * raise);
     }, 3.2f);
 
+    // Keyframe tables are static: Key(u, params ...) would allocate a fresh array per call per frame.
+    private static readonly (float, float)[] AtkArmf = { (0, 10), (0.22f, -60), (0.40f, -80), (0.52f, 60), (0.60f, 105), (0.75f, 90), (0.9f, 35), (1, 10) };
+    private static readonly (float, float)[] AtkArmo = { (0, 10), (0.22f, 75), (0.40f, 95), (0.52f, 55), (0.60f, 30), (0.75f, 25), (0.9f, 15), (1, 10) };
+    private static readonly (float, float)[] AtkFore = { (0, 20), (0.22f, 85), (0.40f, 105), (0.52f, 40), (0.60f, 8), (0.75f, 18), (0.9f, 22), (1, 20) };
+    private static readonly (float, float)[] AtkTwist = { (0, 0), (0.25f, -26), (0.42f, -32), (0.55f, 10), (0.62f, 28), (0.8f, 20), (1, 0) };
+    private static readonly (float, float)[] AtkLean = { (0, 2), (0.25f, -5), (0.42f, -7), (0.60f, 14), (0.78f, 10), (1, 2) };
+    private static readonly (float, float)[] AtkDip = { (0, 0), (0.25f, 0.012f), (0.42f, 0.015f), (0.60f, -0.05f), (0.8f, -0.03f), (1, 0) };
+    private static readonly (float, float)[] AtkStep = { (0, 0), (0.3f, -0.3f), (0.6f, 1f), (0.85f, 0.8f), (1, 0) };
+
     public static readonly Clip Attack = new("Attack", (t, w) =>
     {
         const float period = 1.4f;
         float u = (t % period) / period;
 
-        float armF = Key(u, (0, 10), (0.22f, -60), (0.40f, -80), (0.52f, 60), (0.60f, 105), (0.75f, 90), (0.9f, 35), (1, 10));
-        float armO = Key(u, (0, 10), (0.22f, 75), (0.40f, 95), (0.52f, 55), (0.60f, 30), (0.75f, 25), (0.9f, 15), (1, 10));
-        float fore = Key(u, (0, 20), (0.22f, 85), (0.40f, 105), (0.52f, 40), (0.60f, 8), (0.75f, 18), (0.9f, 22), (1, 20));
-        float twist = Key(u, (0, 0), (0.25f, -26), (0.42f, -32), (0.55f, 10), (0.62f, 28), (0.8f, 20), (1, 0));
-        float lean = Key(u, (0, 2), (0.25f, -5), (0.42f, -7), (0.60f, 14), (0.78f, 10), (1, 2));
-        float dip = Key(u, (0, 0), (0.25f, 0.012f), (0.42f, 0.015f), (0.60f, -0.05f), (0.8f, -0.03f), (1, 0));
-        float step = Key(u, (0, 0), (0.3f, -0.3f), (0.6f, 1f), (0.85f, 0.8f), (1, 0));
+        float armF = Key(u, AtkArmf);
+        float armO = Key(u, AtkArmo);
+        float fore = Key(u, AtkFore);
+        float twist = Key(u, AtkTwist);
+        float lean = Key(u, AtkLean);
+        float dip = Key(u, AtkDip);
+        float step = Key(u, AtkStep);
 
         w.Root(new Vector3(0, dip, 0));
         w.Upright("spine", lean * 0.5f, 0, twist * 0.5f);
@@ -435,13 +464,13 @@ public static class Clips
             string L = side > 0 ? "L" : "R";
             float ph = side > 0 ? 0 : MathHelper.Pi;
             float a = MathF.Sin(beat * 0.5f + ph);
-            w.Hang("arm" + L, 40f + 30f * a, 60f + 25f * a, side);
-            w.Hang("fore" + L, 80f + 30f * MathF.Sin(beat + ph), 20f, side);
-            w.Hang("hand" + L, -10f * MathF.Sin(beat + ph), 0, side);
+            w.Hang(BoneNames.Of("arm", L), 40f + 30f * a, 60f + 25f * a, side);
+            w.Hang(BoneNames.Of("fore", L), 80f + 30f * MathF.Sin(beat + ph), 20f, side);
+            w.Hang(BoneNames.Of("hand", L), -10f * MathF.Sin(beat + ph), 0, side);
             float lift = Pos(a, 0.3f);
-            w.Hang("thigh" + L, 10f + 12f * lift, 10f + 10f * lift, side);
-            w.Hang("shin" + L, -20f - 25f * lift, 0, side);
-            w.Foot("foot" + L, 8f * lift, side);
+            w.Hang(BoneNames.Of("thigh", L), 10f + 12f * lift, 10f + 10f * lift, side);
+            w.Hang(BoneNames.Of("shin", L), -20f - 25f * lift, 0, side);
+            w.Foot(BoneNames.Of("foot", L), 8f * lift, side);
         }
     });
 
@@ -461,7 +490,7 @@ public static class Clips
             {
                 if (!skel.Has(socket)) continue;
                 string L = side > 0 ? "L" : "R";
-                var rest = w.PositionOf("hand" + L);
+                var rest = w.PositionOf(BoneNames.Of("hand", L));
                 var target = w.PositionOf(socket);
                 w.ArmIK(side, Vector3.Lerp(rest, target, reach), hint, reach);
             }

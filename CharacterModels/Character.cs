@@ -149,9 +149,9 @@ public sealed class Character
         for (int side = -1; side <= 1; side += 2)
         {
             string L = side > 0 ? "L" : "R";
-            if (!Skeleton.Has("sheath" + L)) continue;
-            var weapon = Skeleton["weapon" + L];
-            var socket = Skeleton["sheath" + L];
+            if (!Skeleton.Has(BoneNames.Of("sheath", L))) continue;
+            var weapon = Skeleton[BoneNames.Of("weapon", L)];
+            var socket = Skeleton[BoneNames.Of("sheath", L)];
             var inHand = weapon.World; var inSheath = socket.World;
             float t = DrawBlend;
             Matrix world;
@@ -227,19 +227,19 @@ public static class CharacterBuilder
         for (int side = -1; side <= 1; side += 2)
         {
             string L = side > 0 ? "L" : "R";
-            sk.Add("clav" + L, "chest", new Vector3(side * 0.03f * s, 0.16f * s, 0), new Vector3(side * (sw - 0.03f * s), 0.01f * s, 0));
-            sk.Add("arm" + L, "clav" + L, new Vector3(side * (sw - 0.03f * s), 0.01f * s, 0), new Vector3(0, -0.30f * s, 0));
-            sk.Add("fore" + L, "arm" + L, new Vector3(0, -0.30f * s, 0), new Vector3(0, -0.27f * s, 0));
-            sk.Add("hand" + L, "fore" + L, new Vector3(0, -0.27f * s, 0), new Vector3(0, -0.17f * s, 0));
-            sk.Add("thigh" + L, "hips", new Vector3(side * hw, -0.03f * s, 0), new Vector3(0, -0.44f * s, 0));
-            sk.Add("shin" + L, "thigh" + L, new Vector3(0, -0.44f * s, 0), new Vector3(0, -0.42f * s, 0));
-            sk.Add("foot" + L, "shin" + L, new Vector3(0, -0.42f * s, 0), new Vector3(0, -0.035f * s, 0.11f * s));
-            sk.Add("toe" + L, "foot" + L, new Vector3(0, -0.035f * s, 0.11f * s), new Vector3(0, 0, 0.07f * s));
+            sk.Add(BoneNames.Of("clav", L), "chest", new Vector3(side * 0.03f * s, 0.16f * s, 0), new Vector3(side * (sw - 0.03f * s), 0.01f * s, 0));
+            sk.Add(BoneNames.Of("arm", L), BoneNames.Of("clav", L), new Vector3(side * (sw - 0.03f * s), 0.01f * s, 0), new Vector3(0, -0.30f * s, 0));
+            sk.Add(BoneNames.Of("fore", L), BoneNames.Of("arm", L), new Vector3(0, -0.30f * s, 0), new Vector3(0, -0.27f * s, 0));
+            sk.Add(BoneNames.Of("hand", L), BoneNames.Of("fore", L), new Vector3(0, -0.27f * s, 0), new Vector3(0, -0.17f * s, 0));
+            sk.Add(BoneNames.Of("thigh", L), "hips", new Vector3(side * hw, -0.03f * s, 0), new Vector3(0, -0.44f * s, 0));
+            sk.Add(BoneNames.Of("shin", L), BoneNames.Of("thigh", L), new Vector3(0, -0.44f * s, 0), new Vector3(0, -0.42f * s, 0));
+            sk.Add(BoneNames.Of("foot", L), BoneNames.Of("shin", L), new Vector3(0, -0.42f * s, 0), new Vector3(0, -0.035f * s, 0.11f * s));
+            sk.Add(BoneNames.Of("toe", L), BoneNames.Of("foot", L), new Vector3(0, -0.035f * s, 0.11f * s), new Vector3(0, 0, 0.07f * s));
 
             // Weapon bone sits at the hand; its BindRotation turns the hanging bind-pose weapon into a natural grip
             // (blade forward-down across the fist for swords/axes/daggers, vertical for staff and bow).
             bool grip = spec.Weapon is Weapon.Sword or Weapon.Axe or Weapon.Daggers;
-            var wb = sk.Add("weapon" + L, "hand" + L, Vector3.Zero, new Vector3(0, -0.3f * s, 0));
+            var wb = sk.Add(BoneNames.Of("weapon", L), BoneNames.Of("hand", L), Vector3.Zero, new Vector3(0, -0.3f * s, 0));
             wb.BindRotation = grip ? Quaternion.CreateFromAxisAngle(Vector3.Right, MathHelper.ToRadians(-58f)) : Quaternion.Identity;
         }
 
@@ -337,7 +337,7 @@ public static class CharacterBuilder
             Color foreCol = spec.Sleeves switch { Sleeves.Long => spec.Shirt, Sleeves.Bracers => spec.Leather, _ => spec.Skin };
             Vector2 foreMat = spec.Sleeves switch { Sleeves.Long => spec.ShirtMaterial, Sleeves.Bracers => Mat.Leather, _ => Mat.Skin };
             float wide = spec.Robe ? 1.6f : 1f;
-            var armW = new Weighter(sk, 4, "clav" + L, "arm" + L, "fore" + L, "hand" + L);
+            var armW = new Weighter(sk, 4, BoneNames.Of("clav", L), BoneNames.Of("arm", L), BoneNames.Of("fore", L), BoneNames.Of("hand", L));
             mb.Loft(new[]
             {
                 new Ring(new Vector3(x, 1.45f * s, 0), 0.07f * s * b, sleeve, spec.ShirtMaterial),
@@ -353,7 +353,7 @@ public static class CharacterBuilder
             // Hand (mitten + thumb)
             Color handCol = spec.Gloves ? spec.Leather : spec.Skin;
             Vector2 handMat = spec.Gloves ? Mat.Leather : Mat.Skin;
-            var handW = new Weighter(sk, 4, "fore" + L, "hand" + L);
+            var handW = new Weighter(sk, 4, BoneNames.Of("fore", L), BoneNames.Of("hand", L));
             mb.Loft(new[]
             {
                 new Ring(new Vector3(x, 0.86f * s, 0), 0.024f * s * b, 0.036f * s * b, handCol, handMat),
@@ -366,11 +366,11 @@ public static class CharacterBuilder
                 new Ring(new Vector3(x - side * 0.008f * s, 0.83f * s, 0.03f * s), 0.014f * s * b, handCol, handMat),
                 new Ring(new Vector3(x - side * 0.022f * s, 0.79f * s, 0.05f * s), 0.012f * s * b, handCol, handMat),
                 new Ring(new Vector3(x - side * 0.03f * s, 0.765f * s, 0.06f * s), 0.009f * s * b, handCol, handMat)
-            }, 10, Weighter.Fixed(sk, "hand" + L), Vector3.Backward, capEnd: true, capSteps: 3);
+            }, 10, Weighter.Fixed(sk, BoneNames.Of("hand", L)), Vector3.Backward, capEnd: true, capSteps: 3);
 
             // Leg
             float lx = side * hw;
-            var legW = new Weighter(sk, 4, "hips", "thigh" + L, "shin" + L, "foot" + L);
+            var legW = new Weighter(sk, 4, "hips", BoneNames.Of("thigh", L), BoneNames.Of("shin", L), BoneNames.Of("foot", L));
             Color legCol(float y) => y < 0.31f ? spec.Boots : spec.Pants;
             Vector2 legMat(float y) => y < 0.31f ? Mat.Leather : Mat.Cloth;
             (float y, float r)[] lp =
@@ -387,10 +387,10 @@ public static class CharacterBuilder
             {
                 new Ring(new Vector3(lx, 0.22f * s, 0), 0.062f * s * b, spec.Boots, Mat.Leather),
                 new Ring(new Vector3(lx, 0.30f * s, 0), 0.066f * s * b, spec.Boots, Mat.Leather)
-            }, Seg, new Weighter(sk, 4, "shin" + L, "foot" + L), Vector3.Backward, capStart: true, capEnd: true, capSteps: 2);
+            }, Seg, new Weighter(sk, 4, BoneNames.Of("shin", L), BoneNames.Of("foot", L)), Vector3.Backward, capStart: true, capEnd: true, capSteps: 2);
 
             // Foot
-            var footW = new Weighter(sk, 5, "shin" + L, "foot" + L, "toe" + L);
+            var footW = new Weighter(sk, 5, BoneNames.Of("shin", L), BoneNames.Of("foot", L), BoneNames.Of("toe", L));
             mb.Loft(new[]
             {
                 new Ring(new Vector3(lx, 0.05f * s, -0.05f * s), 0.046f * s * b, 0.042f * s * b, spec.Boots, Mat.Leather),
@@ -404,7 +404,7 @@ public static class CharacterBuilder
             if (spec.Pauldrons)
             {
                 mb.Ellipsoid(new Vector3(side * (sw + 0.015f * s), 1.455f * s, 0), new Vector3(0.105f, 0.075f, 0.1f) * s * b, 20, 12,
-                    spec.Metal, Mat.Metal, new Weighter(sk, 3, "clav" + L, "arm" + L),
+                    spec.Metal, Mat.Metal, new Weighter(sk, 3, BoneNames.Of("clav", L), BoneNames.Of("arm", L)),
                     d => MathHelper.Lerp(0.55f, 1f, Sat((d.Y + 0.35f) / 0.25f)) * (1f + 0.04f * MathF.Max(0, MathF.Sin(d.Y * 14f))));
             }
 
@@ -596,8 +596,8 @@ public static class CharacterBuilder
         float sw = 0.21f * s * spec.Shoulders;
         string L = side > 0 ? "L" : "R";
         float x = side * sw;
-        var handW = Weighter.Fixed(sk, "weapon" + L);
-        var foreW = Weighter.Fixed(sk, "fore" + L);
+        var handW = Weighter.Fixed(sk, BoneNames.Of("weapon", L));
+        var foreW = Weighter.Fixed(sk, BoneNames.Of("fore", L));
         Vector3 V(float dx, float y, float z) => new Vector3(x + dx * s, y * s, z * s);
         var steel = spec.Metal; var wood = new Color(110, 80, 50); var dark = new Color(40, 35, 35);
 

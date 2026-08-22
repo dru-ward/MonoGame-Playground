@@ -59,6 +59,7 @@ CharacterModels --export ./obj --shot tmp.png
 opens in Blender).
 `--trees n` number of trees planted around the plaza (0 = none), `--seed n` planting/shape seed,
 `--gallery` one tree of each style in a row behind the characters, `--wind s` wind strength (0 still … 1.3 gale),
+`--perf n` run *n* frames and print average bytes allocated per frame, GC counts and CPU ms (the HUD shows the live figures; the game loop allocates 0 B/frame in Release),
 `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
 
 ## How it works
@@ -106,4 +107,5 @@ that may influence it.
 * `EffectParameter.SetValue(Matrix[])` on a `float4x3` array works the same way `SkinnedEffect` uses it.
 * DesktopGL needs the `OPENGL` macro guards for `vs_3_0/ps_3_0` profiles; `SurfaceFormat.Single`
   render targets and 8× MSAA back buffers both work on DesktopGL/HiDef.
+* The game loop allocates nothing per frame: bone names and effect parameters are cached, HUD text goes through a reused `StringBuilder`, render-target bindings and the G-buffer draw delegate are cached, particle pools are pre-sized structs with swap-remove. `--perf 600` verifies it (see the `monogame-zero-alloc-update-draw` skill).
 * `SpriteBatch` resets depth/blend state — restore `DepthStencilState.Default` after drawing the HUD.

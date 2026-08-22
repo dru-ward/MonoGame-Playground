@@ -12,9 +12,13 @@ public class Game1 : Game
     private SpriteBatch _spriteBatch = null!;
     private SpriteFont _font = null!;
     private Effect _effect = null!;
+    private EffectParameter _pWorld = null!, _pBones = null!;
+    private EffectParameter _pCameraPosition = null!, _pFillColor = null!, _pFillDirection = null!, _pFogColor = null!, _pFogEnd = null!, _pFogStart = null!, _pGrainStrength = null!, _pGrainTexture = null!, _pGroundColor = null!, _pLightColor = null!, _pLightDirection = null!, _pLightViewProjection = null!, _pProjection = null!, _pRimColor = null!, _pShadowMap = null!, _pShadowMapSize = null!, _pShadowStrength = null!, _pSkyColor = null!, _pTime = null!, _pView = null!, _pWindDirection = null!, _pWindStrength = null!;
+    private static readonly RasterizerState Wireframe = new() { FillMode = FillMode.WireFrame, CullMode = CullMode.None };
     private Effect _deferredFx = null!;
     private DeferredRenderer _deferred = null!;
     private bool _useDeferred = true;
+    private Action? _drawGBuffer;
     private static readonly (Vector3 pos, Vector3 color, float radius, float intensity, float flicker)[] Lamps =
     {
         (new Vector3(-3.4f, 1.35f, 1.7f), new Vector3(1.0f, 0.55f, 0.22f), 5.5f, 5.0f, 0.25f),
@@ -24,6 +28,8 @@ public class Game1 : Game
     };
     private Texture2D _grain = null!;
     private RenderTarget2D _shadowMap = null!;
+    private RenderTargetBinding[] _shadowBinding = null!;
+    private readonly RenderTargetBinding[] _shotBinding = new RenderTargetBinding[1];
     private const int ShadowSize = 2048;
 
     private readonly List<Character> _characters = new();
@@ -60,6 +66,12 @@ public class Game1 : Game
     private KeyboardState _prevKeys;
     private MouseState _prevMouse;
     private float _time;
+    // Allocation / GC telemetry: bytes allocated on the game thread between the start of Update and the end of Draw.
+    private long _allocStart, _allocFrame, _allocTotal; private int _perfFrames; private float _allocAvg;
+    private readonly int[] _gcBase = new int[3];
+    private readonly System.Diagnostics.Stopwatch _frameClock = new();
+    private double _cpuMsTotal, _cpuMsMax;
+    private readonly System.Text.StringBuilder _hud = new(256);
     private float _wobMinX = 9, _wobMaxX = -9, _wobMinZ = 9, _wobMaxZ = -9;
     private readonly Vector3 _fogColorLinear = new(0.045f, 0.05f, 0.07f);
 
@@ -85,12 +97,15 @@ public class Game1 : Game
         _spriteBatch = new SpriteBatch(GraphicsDevice);
         _font = Content.Load<SpriteFont>("Font");
         _effect = Content.Load<Effect>("Character");
+        _pWorld = _effect.Parameters["World"]; _pBones = _effect.Parameters["Bones"];
+        _pCameraPosition = _effect.Parameters["CameraPosition"]; _pFillColor = _effect.Parameters["FillColor"]; _pFillDirection = _effect.Parameters["FillDirection"]; _pFogColor = _effect.Parameters["FogColor"]; _pFogEnd = _effect.Parameters["FogEnd"]; _pFogStart = _effect.Parameters["FogStart"]; _pGrainStrength = _effect.Parameters["GrainStrength"]; _pGrainTexture = _effect.Parameters["GrainTexture"]; _pGroundColor = _effect.Parameters["GroundColor"]; _pLightColor = _effect.Parameters["LightColor"]; _pLightDirection = _effect.Parameters["LightDirection"]; _pLightViewProjection = _effect.Parameters["LightViewProjection"]; _pProjection = _effect.Parameters["Projection"]; _pRimColor = _effect.Parameters["RimColor"]; _pShadowMap = _effect.Parameters["ShadowMap"]; _pShadowMapSize = _effect.Parameters["ShadowMapSize"]; _pShadowStrength = _effect.Parameters["ShadowStrength"]; _pSkyColor = _effect.Parameters["SkyColor"]; _pTime = _effect.Parameters["Time"]; _pView = _effect.Parameters["View"]; _pWindDirection = _effect.Parameters["WindDirection"]; _pWindStrength = _effect.Parameters["WindStrength"];
         _deferredFx = Content.Load<Effect>("Deferred");
         _deferred = new DeferredRenderer(GraphicsDevice, _deferredFx);
         foreach (var (pos, color, radius, intensity, flicker) in Lamps)
             _deferred.Lights.Add(new PointLight { Position = pos, Color = color, Radius = radius, Intensity = intensity, Flicker = flicker });
         _grain = BuildGrainTexture(256);
         _shadowMap = new RenderTarget2D(GraphicsDevice, ShadowSize, ShadowSize, false, SurfaceFormat.Single, DepthFormat.Depth24, 0, RenderTargetUsage.DiscardContents);
+        _shadowBinding = new RenderTargetBinding[] { _shadowMap };
 
         var specs = Roster.Create();
         float spacing = 1.25f;
@@ -303,6 +318,8 @@ public class Game1 : Game
 
     protected override void Update(GameTime gameTime)
     {
+        _allocStart = GC.GetAllocatedBytesForCurrentThread();
+        _frameClock.Restart();
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         _time += dt;
         var keys = Keyboard.GetState();
@@ -488,13 +505,13 @@ public class Game1 : Game
         var lightVp = lightView * lightProj;
 
         // ---- Shadow pass
-        gd.SetRenderTarget(_shadowMap);
+        gd.SetRenderTargets(_shadowBinding);   // single-target SetRenderTarget allocates a binding array per call
         gd.Clear(ClearOptions.Target | ClearOptions.DepthBuffer, Color.White, 1f, 0);
         gd.DepthStencilState = DepthStencilState.Default;
         gd.RasterizerState = RasterizerState.CullNone;
         gd.BlendState = BlendState.Opaque;
         _effect.CurrentTechnique = _effect.Techniques["ShadowCaster"];
-        _effect.Parameters["LightViewProjection"].SetValue(lightVp);
+        _pLightViewProjection.SetValue(lightVp);
         DrawScene(shadowPass: true);
 
         // ---- Main pass
@@ -509,14 +526,13 @@ public class Game1 : Game
             RimColor = new Vector3(0.28f, 0.32f, 0.42f), FogColor = _fogColorLinear, FogStart = 24f, FogEnd = 75f,
             LightViewProjection = lightVp, ShadowMap = _shadowMap, ShadowMapSize = ShadowSize, ShadowStrength = 0.9f
         };
-        var p = _effect.Parameters;
-        p["View"].SetValue(view);
-        p["Projection"].SetValue(proj);
-        p["GrainTexture"].SetValue(_grain);
-        p["GrainStrength"].SetValue(0.35f);
-        p["Time"].SetValue(_time);
-        p["WindStrength"].SetValue(_wind.Strength);
-        p["WindDirection"].SetValue(_wind.Direction);
+        _pView.SetValue(view);
+        _pProjection.SetValue(proj);
+        _pGrainTexture.SetValue(_grain);
+        _pGrainStrength.SetValue(0.35f);
+        _pTime.SetValue(_time);
+        _pWindStrength.SetValue(_wind.Strength);
+        _pWindDirection.SetValue(_wind.Direction);
 
         if (_useDeferred && !_wireframe)
         {
@@ -526,8 +542,8 @@ public class Game1 : Game
             lighting.GroundColor = new Vector3(0.08f, 0.07f, 0.06f);
             lighting.FillColor = new Vector3(0.10f, 0.11f, 0.15f);
             _effect.CurrentTechnique = _effect.Techniques["GBuffer"];
-            _deferred.Render(pp.BackBufferWidth, pp.BackBufferHeight, _shotTarget, view, proj, camPos, lighting, _time,
-                () => DrawScene(shadowPass: false));
+            _drawGBuffer ??= () => DrawScene(shadowPass: false);   // cached: a fresh lambda per frame is a 64 B delegate allocation
+            _deferred.Render(pp.BackBufferWidth, pp.BackBufferHeight, _shotTarget, view, proj, camPos, lighting, _time, _drawGBuffer);
             _weather.Draw(gd, view, proj, camPos, depthAvailable: false, ToneMap(_fogColorLinear));
             if (Program.Options.TryGetValue("debug", out var dbg))
             {
@@ -545,30 +561,30 @@ public class Game1 : Game
             return;
         }
 
-        gd.SetRenderTarget(_shotTarget);
+        if (_shotTarget == null) gd.SetRenderTargets(null); else { _shotBinding[0] = _shotTarget; gd.SetRenderTargets(_shotBinding); }
         var fogTm = ToneMap(_fogColorLinear);
         gd.Clear(new Color(fogTm));
         gd.DepthStencilState = DepthStencilState.Default;
-        gd.RasterizerState = _wireframe ? new RasterizerState { FillMode = FillMode.WireFrame, CullMode = CullMode.None } : RasterizerState.CullCounterClockwise;
+        gd.RasterizerState = _wireframe ? Wireframe : RasterizerState.CullCounterClockwise;
         gd.SamplerStates[0] = SamplerState.PointClamp;
         gd.SamplerStates[1] = SamplerState.LinearWrap;
 
         _effect.CurrentTechnique = _effect.Techniques["Skinned"];
-        p["LightViewProjection"].SetValue(lightVp);
-        p["LightDirection"].SetValue(lightDir);
-        p["LightColor"].SetValue(new Vector3(1.05f, 0.98f, 0.88f) * 1.7f);
-        p["FillDirection"].SetValue(Vector3.Normalize(new Vector3(0.8f, -0.15f, 0.35f)));
-        p["FillColor"].SetValue(new Vector3(0.16f, 0.18f, 0.24f));
-        p["SkyColor"].SetValue(new Vector3(0.20f, 0.22f, 0.28f));
-        p["GroundColor"].SetValue(new Vector3(0.10f, 0.085f, 0.07f));
-        p["CameraPosition"].SetValue(camPos);
-        p["RimColor"].SetValue(new Vector3(0.28f, 0.32f, 0.42f));
-        p["ShadowMap"].SetValue(_shadowMap);
-        p["ShadowMapSize"].SetValue((float)ShadowSize);
-        p["ShadowStrength"].SetValue(0.9f);
-        p["FogStart"].SetValue(24f);
-        p["FogEnd"].SetValue(75f);
-        p["FogColor"].SetValue(_fogColorLinear);
+        _pLightViewProjection.SetValue(lightVp);
+        _pLightDirection.SetValue(lightDir);
+        _pLightColor.SetValue(new Vector3(1.05f, 0.98f, 0.88f) * 1.7f);
+        _pFillDirection.SetValue(Vector3.Normalize(new Vector3(0.8f, -0.15f, 0.35f)));
+        _pFillColor.SetValue(new Vector3(0.16f, 0.18f, 0.24f));
+        _pSkyColor.SetValue(new Vector3(0.20f, 0.22f, 0.28f));
+        _pGroundColor.SetValue(new Vector3(0.10f, 0.085f, 0.07f));
+        _pCameraPosition.SetValue(camPos);
+        _pRimColor.SetValue(new Vector3(0.28f, 0.32f, 0.42f));
+        _pShadowMap.SetValue(_shadowMap);
+        _pShadowMapSize.SetValue((float)ShadowSize);
+        _pShadowStrength.SetValue(0.9f);
+        _pFogStart.SetValue(24f);
+        _pFogEnd.SetValue(75f);
+        _pFogColor.SetValue(_fogColorLinear);
         DrawScene(shadowPass: false);
         _weather.Draw(gd, view, proj, camPos, depthAvailable: true, fogTm);
 
@@ -579,8 +595,20 @@ public class Game1 : Game
 
     private void FinishFrame(string? shot)
     {
+        // Telemetry after the HUD so the string work is counted too.
+        _allocFrame = GC.GetAllocatedBytesForCurrentThread() - _allocStart;
+        double ms = _frameClock.Elapsed.TotalMilliseconds;
+        if (_perfFrames > 2) { _allocTotal += _allocFrame; _allocAvg = _allocTotal / (float)(_perfFrames - 2); _cpuMsTotal += ms; _cpuMsMax = Math.Max(_cpuMsMax, ms); }
+        else for (int g = 0; g < 3; g++) _gcBase[g] = GC.CollectionCount(g);
+        _perfFrames++;
+        int perf = (int)Program.Opt("perf", 0);
+        if (perf > 0 && _perfFrames >= perf)
+        {
+            Console.Error.WriteLine($"perf: {perf} frames, avg {_allocAvg:N0} B/frame allocated on the game thread, GC gen0/1/2 = {GC.CollectionCount(0) - _gcBase[0]}/{GC.CollectionCount(1) - _gcBase[1]}/{GC.CollectionCount(2) - _gcBase[2]}, last frame {_allocFrame:N0} B, CPU Update+Draw avg {_cpuMsTotal / Math.Max(1, _perfFrames - 2):0.00} ms max {_cpuMsMax:0.00} ms");
+            Exit();
+        }
         if (_shotTarget == null) return;
-        GraphicsDevice.SetRenderTarget(null);
+        GraphicsDevice.SetRenderTargets(null);
         if (++_frame >= 3)
         {
             using var fs = System.IO.File.Create(shot!);
@@ -592,10 +620,9 @@ public class Game1 : Game
     private void DrawScene(bool shadowPass)
     {
         var gd = GraphicsDevice;
-        var p = _effect.Parameters;
 
-        p["World"].SetValue(Matrix.Identity);
-        p["Bones"].SetValue(_identityPalette);
+        _pWorld.SetValue(Matrix.Identity);
+        _pBones.SetValue(_identityPalette);
         gd.SetVertexBuffer(_groundVb);
         gd.Indices = _groundIb;
         foreach (var pass in _effect.CurrentTechnique.Passes)
@@ -611,8 +638,8 @@ public class Game1 : Game
     private void DrawSkinned(Matrix world, Matrix[] palette, VertexBuffer vb, IndexBuffer ib)
     {
         var gd = GraphicsDevice;
-        _effect.Parameters["World"].SetValue(world);
-        _effect.Parameters["Bones"].SetValue(palette);
+        _pWorld.SetValue(world);
+        _pBones.SetValue(palette);
         gd.SetVertexBuffer(vb);
         gd.Indices = ib;
         foreach (var pass in _effect.CurrentTechnique.Passes)
@@ -622,50 +649,75 @@ public class Game1 : Game
         }
     }
 
+    // HUD lines that only change with state are cached; dynamic lines are built into a reused StringBuilder
+    // (SpriteBatch.DrawString has a StringBuilder overload, so no string is materialised per frame).
+    private static readonly string[] HudLinesOverview =
+    {
+        "F / Tab  focus a character and take control of it (WASD + Shift)",
+        "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
+        "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
+        "Space auto-orbit   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+    };
+    private readonly string[] _hudLinesControl =
+    {
+        "",
+        "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
+        "1-7 animation   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+    };
+    private int _hudControlFocus = -2;
+    private string _hudStats = "";
+    private int _hudStatsKey = -1;
+    private readonly Vector2 _shadowOffset = new(1, 1);
+
     private void DrawHud(Matrix view, Matrix proj)
     {
         var gd = GraphicsDevice;
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
 
-        int tris = 0, verts = 0, treeTris = 0;
-        foreach (var c in _characters) { tris += c.Triangles; verts += c.Vertices; }
-        foreach (var t in _trees) treeTris += t.Triangles;
-
-        void Text(string s, Vector2 pos, Color col, float scale = 1f)
-        {
-            _spriteBatch.DrawString(_font, s, pos + new Vector2(1, 1), Color.Black * 0.7f, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
-            _spriteBatch.DrawString(_font, s, pos, col, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
-        }
-
         Text("MonoGame Procedural Characters", new Vector2(16, 12), Color.White, 1.3f);
-        string mode = _useDeferred ? $"deferred: {_deferred.Lights.Count} point lights + shadowed key ({_deferred.LightFormat})" : "forward: key + fill, PCF shadows";
-        Text($"{_characters.Count} characters  |  {tris:N0} triangles  {verts:N0} vertices  |  {_characters[0].Skeleton.Count} bones each  |  {mode}",
-            new Vector2(16, 40), new Color(200, 205, 215));
-        string clipName = _varied ? "varied" : Clips.All[_clipIndex].Name;
-        string windName = _wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale";
-        Text($"Animation: {clipName}     Focus: {(_focus < 0 ? "all" : _characters[_focus].Spec.Name)}     Trees: {_trees.Count} ({treeTris:N0} tris, skinned)   Wind: {windName} ({_wind.Strength:0.00})   Rain: {(_weather.Raining ? "on" : "off")}   Particles: {_weather.Count}",
-            new Vector2(16, 62), new Color(255, 220, 150));
 
-        var lines = _focus >= 0
-            ? new[]
+        // Static stats line: rebuilt only when the render mode changes.
+        int statsKey = _useDeferred ? 1 : 0;
+        if (statsKey != _hudStatsKey)
+        {
+            int tris = 0, verts = 0;
+            for (int i = 0; i < _characters.Count; i++) { tris += _characters[i].Triangles; verts += _characters[i].Vertices; }
+            string mode = _useDeferred ? $"deferred: {_deferred.Lights.Count} point lights + shadowed key ({_deferred.LightFormat})" : "forward: key + fill, PCF shadows";
+            _hudStats = $"{_characters.Count} characters  |  {tris:N0} triangles  {verts:N0} vertices  |  {_characters[0].Skeleton.Count} bones each  |  {mode}";
+            _hudStatsKey = statsKey;
+        }
+        Text(_hudStats, new Vector2(16, 40), new Color(200, 205, 215));
+
+        // Dynamic line: StringBuilder, no per-frame string allocation.
+        var sb = _hud; sb.Clear();
+        sb.Append("Animation: ").Append(_varied ? "varied" : Clips.All[_clipIndex].Name);
+        sb.Append("     Focus: ").Append(_focus < 0 ? "all" : _characters[_focus].Spec.Name);
+        sb.Append("     Trees: ").Append(_trees.Count);
+        sb.Append("   Wind: ").Append(_wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale");
+        sb.Append(" (").AppendFixed(_wind.Strength, 2).Append(')');
+        sb.Append("   Rain: ").Append(_weather.Raining ? "on" : "off");
+        sb.Append("   Particles: ").Append(_weather.Count);
+        sb.Append("   Alloc: ").Append(_allocFrame).Append(" B/frame   GC: ").Append(GC.CollectionCount(0)).Append('/').Append(GC.CollectionCount(1)).Append('/').Append(GC.CollectionCount(2));
+        TextSb(sb, new Vector2(16, 62), new Color(255, 220, 150));
+
+        string[] lines;
+        if (_focus >= 0)
+        {
+            if (_hudControlFocus != _focus)
             {
-                $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance",
-                "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
-                "1-7 animation   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+                _hudLinesControl[0] = $"Controlling {_characters[_focus].Spec.Name}:  W A S D  move   Shift  run   H draw / sheathe weapon   Q attack   E wave   X dance";
+                _hudControlFocus = _focus;
             }
-            : new[]
-            {
-                "F / Tab  focus a character and take control of it (WASD + Shift)",
-                "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
-                "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-                "Space auto-orbit   T wind   N rain   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
-            };
+            lines = _hudLinesControl;
+        }
+        else lines = HudLinesOverview;
         float y = gd.Viewport.Height - 16 - lines.Length * 20;
-        foreach (var l in lines) { Text(l, new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }
+        for (int i = 0; i < lines.Length; i++) { Text(lines[i], new Vector2(16, y), new Color(190, 195, 205), 0.9f); y += 20; }
 
         // Name labels over heads
-        foreach (var c in _characters)
+        for (int i = 0; i < _characters.Count; i++)
         {
+            var c = _characters[i];
             var worldPos = c.Position + new Vector3(0, c.Spec.Height + 0.28f, 0);
             var sp = gd.Viewport.Project(worldPos, proj, view, Matrix.Identity);
             if (sp.Z < 0 || sp.Z > 1) continue;
@@ -677,5 +729,32 @@ public class Game1 : Game
         // SpriteBatch clobbers these; restore for next frame's 3D pass.
         gd.DepthStencilState = DepthStencilState.Default;
         gd.BlendState = BlendState.Opaque;
+    }
+
+    private void Text(string s, Vector2 pos, Color col, float scale = 1f)
+    {
+        _spriteBatch.DrawString(_font, s, pos + _shadowOffset, Color.Black * 0.7f, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
+        _spriteBatch.DrawString(_font, s, pos, col, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
+    }
+
+    private void TextSb(System.Text.StringBuilder s, Vector2 pos, Color col, float scale = 1f)
+    {
+        _spriteBatch.DrawString(_font, s, pos + _shadowOffset, Color.Black * 0.7f, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
+        _spriteBatch.DrawString(_font, s, pos, col, 0, Vector2.Zero, scale, SpriteEffects.None, 0);
+    }
+}
+
+internal static class StringBuilderExt
+{
+    /// <summary>Appends a float with a fixed number of decimals without going through float.ToString (which allocates).</summary>
+    public static System.Text.StringBuilder AppendFixed(this System.Text.StringBuilder sb, float v, int decimals)
+    {
+        if (v < 0) { sb.Append('-'); v = -v; }
+        int scale = 1; for (int i = 0; i < decimals; i++) scale *= 10;
+        long whole = (long)v; long frac = (long)MathF.Round((v - whole) * scale);
+        if (frac >= scale) { whole++; frac -= scale; }
+        sb.Append(whole);
+        if (decimals > 0) { sb.Append('.'); for (int d = scale / 10; d >= 1; d /= 10) sb.Append((char)('0' + (frac / d) % 10)); }
+        return sb;
     }
 }

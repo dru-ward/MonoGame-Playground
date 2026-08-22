@@ -36,4 +36,5 @@ TopDownRaid keeps short stubs under `TopDownRaid/.claude/skills/` that point bac
 | `monogame-deferred-3d-lighting` | MRT G-buffer, depth reconstruction, sphere-volume point lights, half-float light buffer, composite |
 | `monogame-procedural-trees-wind` | Trees as skinned rigs (six styles), bone sway + vertex-shader leaf flutter, gust model, planting |
 | `monogame-procedural-animation` | Gait tables, Catmull-Rom keys, spring follow-through, 2-bone IK, weapon sockets |
+| `monogame-zero-alloc-update-draw` | Measure per-frame allocations, the catalogue of hidden garbage in Update/Draw, pools, cached effect/state objects |
 | `monogame-headless-screenshots` | Deterministic offscreen captures via startup options for visual iteration |

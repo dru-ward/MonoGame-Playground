@@ -19,16 +19,17 @@ public sealed class Weather
     public float RainDensity = 1f;           // 1 = steady rain
     public bool Leaves = true;
 
-    private readonly List<Drop> _drops = new();
-    private readonly List<Splash> _splashes = new();
-    private readonly List<LeafP> _leaves = new();
+    // Pools are pre-sized to their caps so steady state never grows a list or the vertex array.
+    private readonly List<Drop> _drops = new(MaxDrops);
+    private readonly List<Splash> _splashes = new(MaxSplashes);
+    private readonly List<LeafP> _leaves = new(MaxLeaves);
     private readonly Random _rnd = new(99);
     private readonly BasicEffect _fx;
-    private VertexPositionColor[] _verts = new VertexPositionColor[6 * 4096];
+    private VertexPositionColor[] _verts = new VertexPositionColor[MaxDrops * 6 + MaxSplashes * 48 + MaxLeaves * 12];
     private int _vertCount;
     private float _leafTimer;
 
-    private const int MaxDrops = 2600;
+    private const int MaxDrops = 2600, MaxSplashes = 600, MaxLeaves = 400;
     private const float Gravity = 9.8f;
 
     public Weather(GraphicsDevice gd)
@@ -61,7 +62,7 @@ public sealed class Weather
             d.Pos += d.Vel * dt;
             if (d.Pos.Y <= 0f || !Raining && _rnd.NextDouble() < 0.02)
             {
-                if (d.Pos.Y <= 0f && _splashes.Count < 600 && _rnd.NextDouble() < 0.35)
+                if (d.Pos.Y <= 0f && _splashes.Count < MaxSplashes && _rnd.NextDouble() < 0.35)
                     _splashes.Add(new Splash { Pos = new Vector3(d.Pos.X, 0.01f, d.Pos.Z), Age = 0 });
                 if (Raining && _drops.Count <= target)
                 {
@@ -69,7 +70,7 @@ public sealed class Weather
                     d.Pos = new Vector3(center.X + Rand(-half, half), top, center.Z + Rand(-half, half));
                     _drops[i] = d;
                 }
-                else _drops.RemoveAt(i);
+                else { _drops[i] = _drops[^1]; _drops.RemoveAt(_drops.Count - 1); }
                 continue;
             }
             _drops[i] = d;
@@ -77,14 +78,14 @@ public sealed class Weather
         for (int i = _splashes.Count - 1; i >= 0; i--)
         {
             var s = _splashes[i]; s.Age += dt;
-            if (s.Age > 0.28f) _splashes.RemoveAt(i); else _splashes[i] = s;
+            if (s.Age > 0.28f) { _splashes[i] = _splashes[^1]; _splashes.RemoveAt(_splashes.Count - 1); } else _splashes[i] = s;
         }
 
         // ---- leaves: shed from crowns in proportion to wind, tumble, drift, settle and fade.
         if (Leaves && wind.Strength > 0.05f && leafSources.Count > 0)
         {
             _leafTimer += dt * wind.Strength * 2.2f * leafSources.Count;
-            while (_leafTimer > 1f && _leaves.Count < 400)
+            while (_leafTimer > 1f && _leaves.Count < MaxLeaves)
             {
                 _leafTimer -= 1f;
                 var src = leafSources[_rnd.Next(leafSources.Count)];
@@ -120,7 +121,7 @@ public sealed class Weather
                 // On the ground: skitter along in strong wind, then fade away.
                 if (wind.Strength > 0.9f) l.Pos += wind.Direction * wind.Strength * 0.25f * dt * (0.5f + 0.5f * MathF.Sin(l.Age * 7f + l.Phase));
             }
-            if (l.Age > l.Life) _leaves.RemoveAt(i); else _leaves[i] = l;
+            if (l.Age > l.Life) { _leaves[i] = _leaves[^1]; _leaves.RemoveAt(_leaves.Count - 1); } else _leaves[i] = l;
         }
     }
 
@@ -132,8 +133,9 @@ public sealed class Weather
 
         // Rain: thin streaks stretched along velocity, faded with distance into the fog colour.
         var rainCol = new Color(170, 190, 215);
-        foreach (var d in _drops)
+        for (int i = 0; i < _drops.Count; i++)
         {
+            var d = _drops[i];
             float dist = Vector3.Distance(camPos, d.Pos);
             if (dist > 30f) continue;
             float a = 0.42f * (1f - MathHelper.Clamp((dist - 6f) / 24f, 0, 1)) * MathHelper.Clamp(dist / 1.5f, 0, 1);
@@ -146,8 +148,9 @@ public sealed class Weather
             Quad(d.Pos + side, d.Pos - side, tail - side, tail + side, col, col * 0.2f);
         }
         // Splashes: a small flat ring that expands and fades.
-        foreach (var s in _splashes)
+        for (int i = 0; i < _splashes.Count; i++)
         {
+            var s = _splashes[i];
             float t = s.Age / 0.28f;
             float r = 0.03f + 0.14f * t;
             var col = new Color(190, 205, 225) * (0.5f * (1 - t));
@@ -155,8 +158,9 @@ public sealed class Weather
             Quad(c + new Vector3(-r, 0, -r), c + new Vector3(r, 0, -r), c + new Vector3(r, 0, r), c + new Vector3(-r, 0, r), col * 0.0f, col, ring: true);
         }
         // Leaves: small tumbling quads; fade in the last second.
-        foreach (var l in _leaves)
+        for (int i = 0; i < _leaves.Count; i++)
         {
+            var l = _leaves[i];
             float fade = MathHelper.Clamp((l.Life - l.Age) / 1.2f, 0, 1);
             var col = l.Color * fade;
             var dark = new Color((int)(l.Color.R * 0.7f), (int)(l.Color.G * 0.7f), (int)(l.Color.B * 0.7f)) * fade;
