@@ -350,14 +350,35 @@ public sealed class Structures
 
     // -------------------------------------------------------------------- props
 
+    /// <summary>Props are placed after buildings: push a round prop out of any building box (plus clearance) so it never clips a wall.</summary>
+    private Vector3 ClearOfBoxes(Vector3 c, float r, string what)
+    {
+        const float clearance = 0.12f;
+        for (int pass = 0; pass < 3; pass++)
+            foreach (var b in Boxes)
+            {
+                float minX = b.Min.X - r - clearance, maxX = b.Max.X + r + clearance, minZ = b.Min.Z - r - clearance, maxZ = b.Max.Z + r + clearance;
+                if (c.X <= minX || c.X >= maxX || c.Z <= minZ || c.Z >= maxZ) continue;
+                float dxl = c.X - minX, dxr = maxX - c.X, dzl = c.Z - minZ, dzr = maxZ - c.Z;
+                float m = MathF.Min(MathF.Min(dxl, dxr), MathF.Min(dzl, dzr));
+                var moved = c;
+                if (m == dxl) moved.X = minX; else if (m == dxr) moved.X = maxX; else if (m == dzl) moved.Z = minZ; else moved.Z = maxZ;
+                Console.Error.WriteLine($"structures: {what} at ({c.X:0.0}, {c.Z:0.0}) overlapped a building; moved to ({moved.X:0.0}, {moved.Z:0.0})");
+                c = moved;
+            }
+        return c;
+    }
+
     public void Barrel(Vector3 c)
     {
+        c = ClearOfBoxes(c, 0.34f, "barrel");
         var col = Vary(Plank, 12);
         _mb.Loft(new[]
         {
-            new Ring(c + new Vector3(0, 0.02f, 0), 0.27f, col, Wood), new Ring(c + new Vector3(0, 0.45f, 0), 0.32f, col, Wood),
-            new Ring(c + new Vector3(0, 0.88f, 0), 0.27f, col, Wood)
-        }, 12, _w, Vector3.Backward, capStart: true, capEnd: true, capSteps: 1);
+            new Ring(c + new Vector3(0, 0.02f, 0), 0.001f, col, Wood), new Ring(c + new Vector3(0, 0.02f, 0), 0.27f, col, Wood),
+            new Ring(c + new Vector3(0, 0.45f, 0), 0.32f, col, Wood), new Ring(c + new Vector3(0, 0.88f, 0), 0.27f, col, Wood),
+            new Ring(c + new Vector3(0, 0.89f, 0), 0.24f, PlankDark, Wood), new Ring(c + new Vector3(0, 0.89f, 0), 0.001f, PlankDark, Wood)   // flat lid
+        }, 12, _w, Vector3.Backward);
         foreach (float y in new[] { 0.15f, 0.75f })
             _mb.Loft(new[] { new Ring(c + new Vector3(0, y - 0.03f, 0), 0.305f + (y > 0.5f ? 0 : 0.0f), Iron, Metal), new Ring(c + new Vector3(0, y + 0.03f, 0), 0.305f, Iron, Metal) }, 12, _w, Vector3.Backward);
         Circles.Add((c, 0.34f));
@@ -365,6 +386,7 @@ public sealed class Structures
 
     public void Crate(Vector3 c, float size = 0.7f, float yaw = 0)
     {
+        c = ClearOfBoxes(c, size * 0.75f, "crate");
         var rot = Quaternion.CreateFromAxisAngle(Vector3.Up, yaw);
         Box(c + new Vector3(0, size * 0.5f, 0), new Vector3(size), Vary(Plank, 10), Wood, rot);
         foreach (var e in new[] { new Vector3(1, 1, 0), new Vector3(1, 0, 1), new Vector3(0, 1, 1) })

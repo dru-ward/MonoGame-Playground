@@ -274,9 +274,10 @@ public class Game1 : Game
             s.StoneWall(new Vector3(21f, 0, 9f), new Vector3(21f, 0, 19f));
             s.StoneWall(new Vector3(21f, 0, 19f), new Vector3(9f, 0, 19f));
             // Props.
-            s.Barrel(new Vector3(13.3f, 0, 1.0f)); s.Barrel(new Vector3(13.9f, 0, 1.6f)); s.Crate(new Vector3(13.2f, 0, 6.2f), 0.7f, 0.4f);
-            s.Crate(new Vector3(-13.4f, 0, -6.5f), 0.8f, 0.2f); s.Crate(new Vector3(-13.4f, 0, -6.5f + 0.0f) + new Vector3(0, 0.8f, 0), 0.6f, 0.9f);
-            s.Barrel(new Vector3(-12.6f, 0, -0.4f)); s.Barrel(new Vector3(1.6f, 0, 10.2f));
+            // Props sit just outside the building footprints (cottage front wall is at x = 13.9, barn's at x = -12.35).
+            s.Barrel(new Vector3(13.0f, 0, 1.3f)); s.Barrel(new Vector3(12.9f, 0, 2.05f)); s.Crate(new Vector3(12.9f, 0, 6.7f), 0.7f, 0.4f);
+            s.Crate(new Vector3(-11.5f, 0, -5.6f), 0.8f, 0.2f); s.Crate(new Vector3(-11.5f, 0, -5.6f) + new Vector3(0, 0.8f, 0), 0.6f, 0.9f);
+            s.Barrel(new Vector3(-11.6f, 0, -0.3f)); s.Barrel(new Vector3(1.6f, 0, 10.2f));
         });
         foreach (var (pos, color, radius, intensity) in _structures.Lights)
             _deferred.Lights.Add(new PointLight { Position = pos, Color = color, Radius = radius, Intensity = intensity, Flicker = 0.15f });
