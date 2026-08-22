@@ -36,6 +36,7 @@ public sealed class Vegetation
         public Func<float, float, bool> IsField = (x, z) => z < -8.5f;
         /// <summary>Places to leave bare (tree trunks), as (x, z, radius).</summary>
         public List<(float x, float z, float r)> Keepouts = new();
+        public List<Aabb> KeepoutBoxes = new();
     }
 
     public static Vegetation Build(GraphicsDevice gd, int seed, Options o)
@@ -50,6 +51,8 @@ public sealed class Vegetation
             if (MathF.Abs(x) > o.Extent || MathF.Abs(z) > o.Extent) return false;
             foreach (var (kx, kz, kr) in o.Keepouts)
                 if ((x - kx) * (x - kx) + (z - kz) * (z - kz) < (kr + margin) * (kr + margin)) return false;
+            foreach (var b in o.KeepoutBoxes)
+                if (x > b.Min.X - margin && x < b.Max.X + margin && z > b.Min.Z - margin && z < b.Max.Z + margin) return false;
             return true;
         }
 

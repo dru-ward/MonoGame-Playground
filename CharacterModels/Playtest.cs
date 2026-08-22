@@ -43,6 +43,7 @@ public sealed class InputScript
     public readonly List<Step> Steps = new();
     private int _index = -1;
     private float _stepTime;
+    private bool _pendingAfterShot;
     public float Time { get; private set; }
     public bool Done => _index >= Steps.Count;
     public Step? Current => _index >= 0 && _index < Steps.Count ? Steps[_index] : null;
@@ -84,6 +85,7 @@ public sealed class InputScript
     {
         Time += dt;
         if (_index < 0) Begin(0);
+        else if (_pendingAfterShot) { _pendingAfterShot = false; Begin(_index); }
         while (!Done)
         {
             var step = Steps[_index];
@@ -105,8 +107,11 @@ public sealed class InputScript
         _index = index; _stepTime = 0;
         while (_index < Steps.Count && Steps[_index].Command != null)
         {
-            Command?.Invoke(Steps[_index].Command!);
+            var cmd = Steps[_index].Command!;
+            Command?.Invoke(cmd);
             _index++;
+            // A shot captures the end of *this* frame; later commands must wait for the next frame so they are not in the picture.
+            if (cmd[0].Equals("shot", StringComparison.OrdinalIgnoreCase)) { _pendingAfterShot = true; break; }
         }
     }
 }

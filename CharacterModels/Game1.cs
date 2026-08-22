@@ -34,6 +34,7 @@ public class Game1 : Game
         switch (args[0].ToLowerInvariant())
         {
             case "cam": _camYaw = MathHelper.ToRadians(F(1, 0)); _camPitch = MathHelper.ToRadians(F(2, 10)); _camDist = _camDistGoal = F(3, _camDist); _autoOrbit = false; break;
+            case "look": _camTarget = _camTargetGoal = new Vector3(F(1, 0), F(2, 1), F(3, 0)); _focus = -1; _autoOrbit = false; break;
             case "wind": _wind.Strength = F(1, 0.7f); break;
             case "rain": _weather.Raining = args.Length < 2 || args[1] != "off"; break;
             case "shot": _pendingShotLabel = args.Length > 1 ? args[1] : "shot"; break;
@@ -55,11 +56,13 @@ public class Game1 : Game
     private RenderTarget2D _shadowMap = null!;
     private RenderTargetBinding[] _shadowBinding = null!;
     private readonly RenderTargetBinding[] _shotBinding = new RenderTargetBinding[1];
-    private const int ShadowSize = 2048;
+    private const int ShadowSize = 4096;
 
     private readonly List<Character> _characters = new();
     private readonly List<Tree> _trees = new();
     private Vegetation? _vegetation;
+    private Structures? _structures;
+    private const float MapHalf = 24f;           // playable half-size (ground is MapHalf + small margin)
     private bool _vegetationHidden;
     private readonly Wind _wind = new();
     private Weather _weather = null!;
@@ -150,10 +153,16 @@ public class Game1 : Game
             _dressedSpecs.Add(specs[i]);
         }
         BuildGround();
-        PlantTrees((int)Program.Opt("trees", 22), (int)Program.Opt("seed", 7));
+        if (!Program.Flag("no-buildings")) BuildHamlet((int)Program.Opt("seed", 7));
+        PlantTrees((int)Program.Opt("trees", 46), (int)Program.Opt("seed", 7));
         if (!Program.Flag("no-grass"))
         {
-            var opt = new Vegetation.Options { BladesPerM2 = Program.Opt("grass", 38f) };
+            var opt = new Vegetation.Options { BladesPerM2 = Program.Opt("grass", 16f), Extent = MapHalf - 0.4f, Bushes = 22, IsField = (x, z) => z < -13f && x > -14f && x < 12f };
+            if (_structures != null)
+            {
+                foreach (var b in _structures.Boxes) opt.KeepoutBoxes.Add(b);
+                foreach (var (p, r) in _structures.Circles) opt.Keepouts.Add((p.X, p.Z, r));
+            }
             foreach (var t in _trees) opt.Keepouts.Add((t.Position.X, t.Position.Z, t.Radius + 0.1f));
             foreach (var (pos, _, _, _, _) in Lamps) opt.Keepouts.Add((pos.X, pos.Z, 0.12f));
             _vegetation = Vegetation.Build(GraphicsDevice, (int)Program.Opt("seed", 7) + 1, opt);
@@ -244,6 +253,43 @@ public class Game1 : Game
         _hudStatsKey = -1;   // triangle counts changed
     }
 
+    /// <summary>Lays out the hamlet: two cottages east, a barn west, the well by the plaza, a watchtower, fences round the field, a walled yard.</summary>
+    private void BuildHamlet(int seed)
+    {
+        _structures = Structures.Build(GraphicsDevice, seed * 17, s =>
+        {
+            s.Cottage(new Vector3(16f, 0, 3.5f), -MathHelper.PiOver2, name: "Cottage");
+            s.Cottage(new Vector3(14.5f, 0, -7.5f), -MathHelper.PiOver2, w: 4.2f, d: 3.6f, h: 2.4f, thatched: true, name: "Thatched cottage");
+            s.Barn(new Vector3(-17f, 0, -3f), MathHelper.PiOver2);
+            s.Well(new Vector3(0f, 0, 8.6f));
+            s.Watchtower(new Vector3(-14f, 0, 12.5f), MathHelper.PiOver4 * 0);
+            // Field fence: along the north edge of the field with a gap in the middle, and down both sides.
+            s.Fence(new Vector3(-14f, 0, -12.6f), new Vector3(-2.2f, 0, -12.6f));
+            s.Fence(new Vector3(2.2f, 0, -12.6f), new Vector3(12f, 0, -12.6f), new Vector3(12f, 0, -23f));
+            s.Fence(new Vector3(-14f, 0, -12.6f), new Vector3(-14f, 0, -23f));
+            // Walled yard south-east of the plaza with a gateway facing the well.
+            s.StoneWall(new Vector3(5f, 0, 9f), new Vector3(21f, 0, 9f), gateAt: 3.5f);
+            s.StoneWall(new Vector3(21f, 0, 9f), new Vector3(21f, 0, 19f));
+            s.StoneWall(new Vector3(21f, 0, 19f), new Vector3(9f, 0, 19f));
+            // Props.
+            s.Barrel(new Vector3(13.3f, 0, 1.0f)); s.Barrel(new Vector3(13.9f, 0, 1.6f)); s.Crate(new Vector3(13.2f, 0, 6.2f), 0.7f, 0.4f);
+            s.Crate(new Vector3(-13.4f, 0, -6.5f), 0.8f, 0.2f); s.Crate(new Vector3(-13.4f, 0, -6.5f + 0.0f) + new Vector3(0, 0.8f, 0), 0.6f, 0.9f);
+            s.Barrel(new Vector3(-12.6f, 0, -0.4f)); s.Barrel(new Vector3(1.6f, 0, 10.2f));
+        });
+        foreach (var (pos, color, radius, intensity) in _structures.Lights)
+            _deferred.Lights.Add(new PointLight { Position = pos, Color = color, Radius = radius, Intensity = intensity, Flicker = 0.15f });
+    }
+
+    private bool InsideStructure(Vector3 p, float margin)
+    {
+        if (_structures == null) return false;
+        foreach (var b in _structures.Boxes)
+            if (p.X > b.Min.X - margin && p.X < b.Max.X + margin && p.Z > b.Min.Z - margin && p.Z < b.Max.Z + margin) return true;
+        foreach (var (c, r) in _structures.Circles)
+            if (Vector3.DistanceSquared(new Vector3(c.X, 0, c.Z), new Vector3(p.X, 0, p.Z)) < (r + margin) * (r + margin)) return true;
+        return false;
+    }
+
     /// <summary>Plants a ring of mixed-style trees around the plaza with a minimum spacing; --trees 0 disables.</summary>
     private void PlantTrees(int count, int seed)
     {
@@ -265,11 +311,13 @@ public class Game1 : Game
         while (_trees.Count < count && tries++ < count * 40)
         {
             float ang = (float)rnd.NextDouble() * MathHelper.TwoPi;
-            float rad = 6.2f + (float)rnd.NextDouble() * 6.5f;
+            float rad = 6.8f + (float)rnd.NextDouble() * (MapHalf - 8f);
             var pos = new Vector3(MathF.Cos(ang) * rad, 0, MathF.Sin(ang) * rad);
-            if (MathF.Abs(pos.X) > 13f || MathF.Abs(pos.Z) > 13f) continue;
+            if (MathF.Abs(pos.X) > MapHalf - 1.5f || MathF.Abs(pos.Z) > MapHalf - 1.5f) continue;
+            if (InsideStructure(pos, 2.2f)) continue;
+            if (pos.Z < -12f && pos.X > -15f && pos.X < 13f) continue;   // keep the field open
             bool ok = true;
-            foreach (var q in placed) if (Vector3.DistanceSquared(q, pos) < 2.6f * 2.6f) { ok = false; break; }
+            foreach (var q in placed) if (Vector3.DistanceSquared(q, pos) < 3.2f * 3.2f) { ok = false; break; }
             if (!ok) continue;
             // Cycle styles so every kind appears; palms and dead trees are rarer.
             var style = styles[_trees.Count % styles.Length];
@@ -328,7 +376,7 @@ public class Game1 : Game
         sk.Add("root", null, Vector3.Zero, Vector3.Up);
         var w = Weighter.Fixed(sk, "root");
         var mb = new MeshBuilder();
-        const int half = 14;
+        const int half = (int)MapHalf;
         var a = new Color(92, 90, 96); var b = new Color(78, 76, 82);
         var grass = new Random(3);
         for (int z = -half; z < half; z++)
@@ -489,8 +537,8 @@ public class Game1 : Game
         var before = c.Position;
         c.Position += _moveVel * dt;
         ResolveCollisions(c);
-        c.Position.X = MathHelper.Clamp(c.Position.X, -13f, 13f);
-        c.Position.Z = MathHelper.Clamp(c.Position.Z, -13f, 13f);
+        c.Position.X = MathHelper.Clamp(c.Position.X, -MapHalf + 0.5f, MapHalf - 0.5f);
+        c.Position.Z = MathHelper.Clamp(c.Position.Z, -MapHalf + 0.5f, MapHalf - 0.5f);
         // Animate from the displacement that actually happened (after collision and world bounds), so feet never
         // run on the spot against a trunk or the edge of the map. Smoothed to hide per-frame jitter.
         float actual = dt > 0 ? Vector3.Distance(before, c.Position) / dt : 0f;
@@ -530,9 +578,32 @@ public class Game1 : Game
                 best = MathF.Min(best, RayHit(_camTarget, dir, Vector3.Transform(c, world), r + 0.1f));
             }
         }
+        if (_structures != null)
+        {
+            foreach (var b in _structures.Boxes) best = MathF.Min(best, RayBox(_camTarget, dir, b));
+            foreach (var (sc, sr) in _structures.Circles)
+                for (int k = 0; k < 4; k++) best = MathF.Min(best, RayHit(_camTarget, dir, sc + new Vector3(0, 0.4f + k * 0.9f, 0), sr + 0.2f));
+        }
         // Ground plane: keep the eye at least 0.25 m up.
         if (dir.Y < -1e-4f) best = MathF.Min(best, (0.25f - _camTarget.Y) / dir.Y);
         return MathHelper.Clamp(best - 0.15f, 1.2f, dist);
+    }
+
+    /// <summary>Slab test: distance along the ray to where it enters the box (+inf on a miss or when starting inside).</summary>
+    private static float RayBox(Vector3 o, Vector3 d, in Aabb b)
+    {
+        float tmin = 0f, tmax = float.PositiveInfinity;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            float oa = axis == 0 ? o.X : axis == 1 ? o.Y : o.Z, da = axis == 0 ? d.X : axis == 1 ? d.Y : d.Z;
+            float lo = axis == 0 ? b.Min.X : axis == 1 ? b.Min.Y : b.Min.Z, hi = axis == 0 ? b.Max.X : axis == 1 ? b.Max.Y : b.Max.Z;
+            if (MathF.Abs(da) < 1e-6f) { if (oa < lo || oa > hi) return float.PositiveInfinity; continue; }
+            float t1 = (lo - oa) / da, t2 = (hi - oa) / da;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tmin = MathF.Max(tmin, t1); tmax = MathF.Min(tmax, t2);
+            if (tmin > tmax) return float.PositiveInfinity;
+        }
+        return tmin > 0 ? tmin : float.PositiveInfinity;
     }
 
     /// <summary>Distance along the ray to where it enters the sphere (0 when the origin is already inside), or +inf on a miss.</summary>
@@ -556,8 +627,27 @@ public class Game1 : Game
             if (!_treesHidden) foreach (var t in _trees) PushOut(ref c.Position, t.Position, selfR + t.Radius);
             foreach (var (pos, _, _, _, _) in Lamps) PushOut(ref c.Position, new Vector3(pos.X, 0, pos.Z), selfR + 0.07f);
             if (_vegetation != null && !_vegetationHidden) foreach (var (bp, br) in _vegetation.Bushes) PushOut(ref c.Position, bp, selfR * 0.6f + br);
+            if (_structures != null)
+            {
+                foreach (var b in _structures.Boxes) PushOutBox(ref c.Position, b, selfR);
+                foreach (var (sp, sr) in _structures.Circles) PushOut(ref c.Position, sp, selfR + sr);
+            }
             foreach (var o in _characters) if (o != c) PushOut(ref c.Position, o.Position, selfR + 0.3f);
         }
+    }
+
+    /// <summary>Circle (in xz) vs axis-aligned box: push out along the axis of least penetration, kill velocity into the wall.</summary>
+    private void PushOutBox(ref Vector3 p, in Aabb b, float r)
+    {
+        float minX = b.Min.X - r, maxX = b.Max.X + r, minZ = b.Min.Z - r, maxZ = b.Max.Z + r;
+        if (p.X <= minX || p.X >= maxX || p.Z <= minZ || p.Z >= maxZ) return;
+        float dxl = p.X - minX, dxr = maxX - p.X, dzl = p.Z - minZ, dzr = maxZ - p.Z;
+        float m = MathF.Min(MathF.Min(dxl, dxr), MathF.Min(dzl, dzr));
+        Vector3 n;
+        if (m == dxl) { p.X = minX; n = -Vector3.UnitX; } else if (m == dxr) { p.X = maxX; n = Vector3.UnitX; }
+        else if (m == dzl) { p.Z = minZ; n = -Vector3.UnitZ; } else { p.Z = maxZ; n = Vector3.UnitZ; }
+        float into = Vector3.Dot(_moveVel, n);
+        if (into < 0) _moveVel -= n * into;
     }
 
     private void PushOut(ref Vector3 p, Vector3 centre, float minDist)
@@ -610,10 +700,10 @@ public class Game1 : Game
         // Light
         var lightDir = Vector3.Normalize(Vector3.Transform(new Vector3(0, -0.85f, -0.6f), Matrix.CreateRotationY(_lightYaw)));
         var sceneCenter = new Vector3(0, 0.9f, 0);
-        var lightView = Matrix.CreateLookAt(sceneCenter - lightDir * 18f, sceneCenter, Vector3.Up);
-        float shadowExtent = _trees.Count > 0 ? 20f : 8.5f;
+        var lightView = Matrix.CreateLookAt(sceneCenter - lightDir * 30f, sceneCenter, Vector3.Up);
+        float shadowExtent = _trees.Count > 0 || _structures != null ? 40f : 8.5f;
         if (_treesHidden) shadowExtent = 8.5f;
-        var lightProj = Matrix.CreateOrthographic(shadowExtent, shadowExtent, 1f, 36f);
+        var lightProj = Matrix.CreateOrthographic(shadowExtent, shadowExtent, 1f, 60f);
         var lightVp = lightView * lightProj;
 
         // ---- Shadow pass
@@ -765,6 +855,7 @@ public class Game1 : Game
             gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, _groundIb.IndexCount / 3);
         }
 
+        if (_structures != null) DrawSkinned(Matrix.Identity, _identityPalette, _structures.VertexBuffer, _structures.IndexBuffer);
         if (!shadowPass && _vegetation != null && !_vegetationHidden) DrawSkinned(Matrix.Identity, _identityPalette, _vegetation.VertexBuffer, _vegetation.IndexBuffer);
         foreach (var c in _characters) DrawSkinned(c.World, c.Skeleton.Palette, c.VertexBuffer, c.IndexBuffer);
         if (!_treesHidden) foreach (var t in _trees) DrawSkinned(t.World, t.Skeleton.Palette, t.VertexBuffer, t.IndexBuffer);
@@ -829,6 +920,7 @@ public class Game1 : Game
         sb.Append("     Focus: ").Append(_focus < 0 ? "all" : _characters[_focus].Spec.Name);
         sb.Append("     Trees: ").Append(_treesHidden ? 0 : _trees.Count);
         if (_undressed) sb.Append("   Base bodies");
+        if (_structures != null) sb.Append("   Buildings: ").Append(_structures.Names.Count);
         if (_vegetation != null && !_vegetationHidden) sb.Append("   Grass: ").Append(_vegetation.Blades).Append(" blades, ").Append(_vegetation.Flowers).Append(" flowers");
         sb.Append("   Wind: ").Append(_wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale");
         sb.Append(" (").AppendFixed(_wind.Strength, 2).Append(')');

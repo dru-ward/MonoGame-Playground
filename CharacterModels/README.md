@@ -10,6 +10,8 @@ materials, animations, lighting shader) is built at startup by the C# code in th
 ![Trees](docs/trees.png)
 ![Forest](docs/forest.png)
 ![Rain](docs/rain.png)
+![Hamlet](docs/hamlet.png)
+![Hamlet at dusk](docs/hamlet_dusk.png)
 ![Meadow](docs/meadow.png)
 ![Trample](docs/trample.png)
 
@@ -65,7 +67,7 @@ opens in Blender).
 `--trees n` number of trees planted around the plaza (0 = none), `--seed n` planting/shape seed,
 `--gallery` one tree of each style in a row behind the characters, `--wind s` wind strength (0 still … 1.3 gale),
 `--perf n` run *n* frames and print average bytes allocated per frame, GC counts and CPU ms (the HUD shows the live figures; the game loop allocates 0 B/frame in Release),
-`--grass n` blades per m² (default 38), `--no-grass` no ground cover, `--undressed` start in base-body view, `--no-trees` start with the trees hidden, `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
+`--no-buildings` no hamlet, `--grass n` blades per m² (default 16), `--no-grass` no ground cover, `--undressed` start in base-body view, `--no-trees` start with the trees hidden, `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
 
 ### Scripted play-testing
 
@@ -80,7 +82,7 @@ python tools/contact_sheet.py out/run1 --cols 5 --width 400      # -> out/run1/s
 
 `--script` is a `;`-separated timeline: `keys duration` holds a `+`-joined key combination (`w`, `a`, `s`, `d`, `shift`,
 `q`, `e`, `x`, `h`, `f`, `tab`, `n`, `t`, `b`, `1`–`7`, arrows, `space`, …) for that many seconds, no duration = a one-frame tap,
-`idle t` waits, and `cam yaw pitch dist`, `wind s`, `rain on|off`, `focus n`, `light deg`, `shot label`, `deferred`, `forward`
+`idle t` waits, and `cam yaw pitch dist`, `look x y z` (aim the camera at a point), `wind s`, `rain on|off`, `focus n`, `light deg`, `shot label`, `deferred`, `forward`
 are instant commands. The script replaces `Keyboard.GetState()` so the real input → movement → collision → animation path
 runs. `--frames` saves numbered PNGs every `--every` seconds (plus a `final` frame); `--log` writes a per-frame CSV
 (time, step, position, speed, yaw, stride phase, head excursion, clip, allocations, CPU ms). See the
@@ -99,6 +101,7 @@ runs. `--frames` saves numbered PNGs every `--every` seconds (plus a `final` fra
 | `Content/Character.fx` | HLSL (compiled to GLSL by MGCB): 4-bone GPU skinning, wrap-diffuse key light, hemisphere ambient, fill light, Blinn-Phong specular with Fresnel boost (per-vertex material = specular strength + shininess), rim light, 3×3 PCF shadow map, object-space procedural grain, fog, exposure tone-mapping + gamma. A second technique renders the shadow map. |
 | `Trees.cs` | `TreeBuilder` grows a trunk chain of bones (4–6 segments, stiff at the base) with branch / frond bones hanging off it, then lofts bark tubes, shaped-ellipsoid leaf masses (lumpy radius function, darker underside baked into vertex colour), conical pine tiers and serrated palm fronds through `MeshBuilder.Parametric`. `Wind` is a direction, a strength and a gust envelope that travels along the wind so downwind trees react later; `Tree.Update` rotates every bone about the cross-wind axis by `strength × gust × flex × oscillation`, with flex and frequency growing toward the tips. Foliage vertices carry a flutter weight in colour alpha that the vertex shader turns into a ripple along the normal. |
 | `Playtest.cs` | `InputScript` (timeline parser → synthetic `KeyboardState`) and `PlaytestRecorder` (PNG frames + CSV metrics). |
+| `Structures.cs` | The hamlet: timber-framed cottages (slate or thatch, lit windows, chimneys), a plank barn with hay bales, a stone well, a watchtower, post-and-rail fences, dry-stone walls with a gateway, barrels and crates — boxes and lofts in one static mesh, with AABB/circle colliders for the player and camera and point lights for the deferred path. The map is 48 m across. |
 | `Vegetation.cs` | Ground cover in one static mesh: grass blades (clumped by noise, root→tip colour gradient, up-biased normals), a tall golden field band with seed heads, wildflowers in single-species patches (daisy, buttercup, poppy, cornflower, bluebell), lumpy bushes with collision. Wind gusts/waves and trampling by the controlled character are computed in the vertex shader from a bend weight stored in colour alpha — no per-frame CPU work. |
 | `Weather.cs` | CPU particles drawn unlit through a `BasicEffect` after the lit scene: rain streaks stretched along velocity and faded into the fog, expanding splash rings where drops land, and leaves shed from tree crowns that tumble, flutter, drift with the gusts, settle and skitter in strong wind. |
 | `Game1.cs` | Scene, orbit camera with collision against tree trunks and the exact foliage volumes, circle push-out collision for the controlled character against tree trunks, lamp posts and other characters, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
