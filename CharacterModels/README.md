@@ -62,6 +62,25 @@ opens in Blender).
 `--perf n` run *n* frames and print average bytes allocated per frame, GC counts and CPU ms (the HUD shows the live figures; the game loop allocates 0 B/frame in Release),
 `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
 
+### Scripted play-testing
+
+No one at the keyboard is needed to test movement, collision, camera or animation *in motion*:
+
+```
+CharacterModels --no-orbit --focus 2 --dist 4 --pitch 14 --yaw 30 ^
+    --script "w 1.5; w+shift 2; a+w 1; idle 1; q; idle 1.4; rain on; cam 200 12 4; w+shift 2" ^
+    --frames out/run1 --every 0.3 --log out/run1/log.csv
+python tools/contact_sheet.py out/run1 --cols 5 --width 400      # -> out/run1/sheet.png (add --gif run1.gif)
+```
+
+`--script` is a `;`-separated timeline: `keys duration` holds a `+`-joined key combination (`w`, `a`, `s`, `d`, `shift`,
+`q`, `e`, `x`, `h`, `f`, `tab`, `n`, `t`, `b`, `1`–`7`, arrows, `space`, …) for that many seconds, no duration = a one-frame tap,
+`idle t` waits, and `cam yaw pitch dist`, `wind s`, `rain on|off`, `focus n`, `light deg`, `shot label`, `deferred`, `forward`
+are instant commands. The script replaces `Keyboard.GetState()` so the real input → movement → collision → animation path
+runs. `--frames` saves numbered PNGs every `--every` seconds (plus a `final` frame); `--log` writes a per-frame CSV
+(time, step, position, speed, yaw, stride phase, head excursion, clip, allocations, CPU ms). See the
+`monogame-scripted-playtest` skill for the scenario library.
+
 ## How it works
 
 | File | Role |
@@ -74,8 +93,9 @@ opens in Blender).
 | `DeferredRenderer.cs` + `Content/Deferred.fx` | Deferred path: the character effect writes a G-buffer through MRT (albedo+spec, world normal+shininess, depth), a half-float light buffer accumulates a shadowed directional pass plus additive sphere-volume point lights (lamp posts, and the mage's orb following its weapon bone), then a full-screen composite does rim, emissive, fog and tone mapping. `--debug albedo|normal|light` blits an intermediate buffer. |
 | `Content/Character.fx` | HLSL (compiled to GLSL by MGCB): 4-bone GPU skinning, wrap-diffuse key light, hemisphere ambient, fill light, Blinn-Phong specular with Fresnel boost (per-vertex material = specular strength + shininess), rim light, 3×3 PCF shadow map, object-space procedural grain, fog, exposure tone-mapping + gamma. A second technique renders the shadow map. |
 | `Trees.cs` | `TreeBuilder` grows a trunk chain of bones (4–6 segments, stiff at the base) with branch / frond bones hanging off it, then lofts bark tubes, shaped-ellipsoid leaf masses (lumpy radius function, darker underside baked into vertex colour), conical pine tiers and serrated palm fronds through `MeshBuilder.Parametric`. `Wind` is a direction, a strength and a gust envelope that travels along the wind so downwind trees react later; `Tree.Update` rotates every bone about the cross-wind axis by `strength × gust × flex × oscillation`, with flex and frequency growing toward the tips. Foliage vertices carry a flutter weight in colour alpha that the vertex shader turns into a ripple along the normal. |
+| `Playtest.cs` | `InputScript` (timeline parser → synthetic `KeyboardState`) and `PlaytestRecorder` (PNG frames + CSV metrics). |
 | `Weather.cs` | CPU particles drawn unlit through a `BasicEffect` after the lit scene: rain streaks stretched along velocity and faded into the fog, expanding splash rings where drops land, and leaves shed from tree crowns that tumble, flutter, drift with the gusts, settle and skitter in strong wind. |
-| `Game1.cs` | Scene, circle push-out collision for the controlled character against tree trunks, lamp posts and other characters, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
+| `Game1.cs` | Scene, orbit camera with collision against tree trunks and the exact foliage volumes, circle push-out collision for the controlled character against tree trunks, lamp posts and other characters, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
 
 ### Making a new character
 

@@ -19,6 +19,31 @@ public class Game1 : Game
     private DeferredRenderer _deferred = null!;
     private bool _useDeferred = true;
     private Action? _drawGBuffer;
+    // Scripted play-testing (--script, --frames, --every, --log); see Playtest.cs.
+    private InputScript? _script;
+    private PlaytestRecorder? _recorder;
+    private bool _mouseFromScript;
+    private bool _scriptDone;
+    private float _scriptEndTime;
+    private string? _pendingShotLabel;
+
+    /// <summary>Non-key script commands: cam yaw pitch dist | wind s | rain on/off | shot label | focus n | light deg | deferred/forward.</summary>
+    private void OnScriptCommand(string[] args)
+    {
+        float F(int i, float fb) => i < args.Length && float.TryParse(args[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fb;
+        switch (args[0].ToLowerInvariant())
+        {
+            case "cam": _camYaw = MathHelper.ToRadians(F(1, 0)); _camPitch = MathHelper.ToRadians(F(2, 10)); _camDist = _camDistGoal = F(3, _camDist); _autoOrbit = false; break;
+            case "wind": _wind.Strength = F(1, 0.7f); break;
+            case "rain": _weather.Raining = args.Length < 2 || args[1] != "off"; break;
+            case "shot": _pendingShotLabel = args.Length > 1 ? args[1] : "shot"; break;
+            case "focus": FocusOn((int)F(1, -1)); break;
+            case "light": _lightYaw = MathHelper.ToRadians(F(1, 35)); break;
+            case "deferred": _useDeferred = true; break;
+            case "forward": _useDeferred = false; break;
+            default: Console.Error.WriteLine($"script: unknown command '{args[0]}'"); break;
+        }
+    }
     private static readonly (Vector3 pos, Vector3 color, float radius, float intensity, float flicker)[] Lamps =
     {
         (new Vector3(-3.4f, 1.35f, 1.7f), new Vector3(1.0f, 0.55f, 0.22f), 5.5f, 5.0f, 0.25f),
@@ -48,6 +73,7 @@ public class Game1 : Game
     private Vector3 _camTarget = new(0, 0.95f, 0);
     private Vector3 _camTargetGoal = new(0, 0.95f, 0);
     private float _camDistGoal = 6.0f;
+    private float _camDistEffective = 6.0f;   // _camDist after pulling in for trees / ground
     private bool _autoOrbit = true;
     private int _focus = -1;
 
@@ -61,6 +87,7 @@ public class Game1 : Game
     private int _frame;
     // Play mode (focused character is player-controlled)
     private Vector3 _moveVel;
+    private float _actualSpeed;
     private const float WalkSpeed = 1.6f, RunSpeed = 4.4f;
 
     private KeyboardState _prevKeys;
@@ -137,6 +164,14 @@ public class Game1 : Game
             });
         }
         if (Program.Flag("forward")) _useDeferred = false;
+        if (Program.Options.TryGetValue("script", out var scriptText))
+        {
+            _script = InputScript.Parse(scriptText);
+            _script.Command += OnScriptCommand;
+            _recorder = new PlaytestRecorder(Program.Options.TryGetValue("frames", out var fd) ? fd : null, Program.Opt("every", 0.25f),
+                                             Program.Options.TryGetValue("log", out var lp) ? lp : null);
+            _autoOrbit = false;
+        }
 
         // Startup options (for scripted screenshots / demos).
         _camYaw = MathHelper.ToRadians(Program.Opt("yaw", 0));
@@ -322,8 +357,8 @@ public class Game1 : Game
         _frameClock.Restart();
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         _time += dt;
-        var keys = Keyboard.GetState();
-        var mouse = Mouse.GetState();
+        var keys = _script != null ? _script.Advance(dt) : Keyboard.GetState();
+        var mouse = _script != null ? _prevMouse : Mouse.GetState();   // scripts never move the mouse
         bool Pressed(Keys k) => keys.IsKeyDown(k) && !_prevKeys.IsKeyDown(k);
 
         if (keys.IsKeyDown(Keys.Escape)) Exit();
@@ -371,11 +406,13 @@ public class Game1 : Game
         _camPitch = MathHelper.Clamp(_camPitch, MathHelper.ToRadians(-15), MathHelper.ToRadians(80));
         _camDist = MathHelper.Lerp(_camDist, _camDistGoal, 1 - MathF.Exp(-dt * 6));
         _camTarget = Vector3.Lerp(_camTarget, _camTargetGoal, 1 - MathF.Exp(-dt * 6));
+        _camDistEffective = CameraCollision(_camDist);
 
         if (_focus >= 0) UpdatePlayer(dt, keys);
         foreach (var c in _characters) c.Update(dt);
         foreach (var t in _trees) t.Update(_time, _wind);
         _weather.Update(dt, _camTarget, _wind, _leafSources);
+        if (_script != null && _script.Done && !_scriptDone) { _scriptDone = true; _scriptEndTime = _time; }
 
         _prevKeys = keys; _prevMouse = mouse;
         base.Update(gameTime);
@@ -423,10 +460,16 @@ public class Game1 : Game
             float maxTurn = MathHelper.ToRadians(540f) * dt;
             c.Yaw += MathHelper.Clamp(delta * (1 - MathF.Exp(-dt * 9f)), -maxTurn, maxTurn);
         }
+        var before = c.Position;
         c.Position += _moveVel * dt;
         ResolveCollisions(c);
         c.Position.X = MathHelper.Clamp(c.Position.X, -13f, 13f);
         c.Position.Z = MathHelper.Clamp(c.Position.Z, -13f, 13f);
+        // Animate from the displacement that actually happened (after collision and world bounds), so feet never
+        // run on the spot against a trunk or the edge of the map. Smoothed to hide per-frame jitter.
+        float actual = dt > 0 ? Vector3.Distance(before, c.Position) / dt : 0f;
+        _actualSpeed = MathHelper.Lerp(_actualSpeed, actual, 1 - MathF.Exp(-dt * 15f));
+        speed = MathF.Min(speed, _actualSpeed);
 
         // Speed-driven locomotion: one clip, one stride phase; no idle/walk/run cross-fades.
         c.Speed = speed;
@@ -435,6 +478,47 @@ public class Game1 : Game
         // Camera follows.
         _camTargetGoal = c.Position + new Vector3(0, c.Spec.Height * 0.55f, 0);
         _autoOrbit = false;
+    }
+
+    /// <summary>
+    /// Pulls the orbit camera in so it never sits inside a tree: the target->camera ray is tested against each tree's
+    /// trunk (three stacked spheres) and crown sphere, and the distance is clamped to the nearest entry point.
+    /// The ground is kept below the camera too. Pull-in is immediate; _camDist itself keeps easing so release is smooth.
+    /// </summary>
+    private float CameraCollision(float dist)
+    {
+        var dir = Vector3.Transform(Vector3.Backward, Matrix.CreateRotationX(-_camPitch) * Matrix.CreateRotationY(_camYaw));
+        float best = dist;
+        for (int i = 0; i < _trees.Count; i++)
+        {
+            var t = _trees[i];
+            if (Vector3.DistanceSquared(t.Position, _camTarget) > (dist + 3f) * (dist + 3f)) continue;
+            float h = t.CrownHeight;
+            for (int k = 0; k < 6; k++)   // spheres every ~0.5 m so the ray cannot slip between them
+                best = MathF.Min(best, RayHit(_camTarget, dir, t.Position + new Vector3(0, 0.3f + h * 0.16f * k, 0), t.Radius + 0.3f));
+            // Exact foliage volumes recorded by the builder (tree-local -> world by yaw + position).
+            var world = t.World;
+            for (int f = 0; f < t.Foliage.Count; f++)
+            {
+                var (c, r) = t.Foliage[f];
+                best = MathF.Min(best, RayHit(_camTarget, dir, Vector3.Transform(c, world), r + 0.1f));
+            }
+        }
+        // Ground plane: keep the eye at least 0.25 m up.
+        if (dir.Y < -1e-4f) best = MathF.Min(best, (0.25f - _camTarget.Y) / dir.Y);
+        return MathHelper.Clamp(best - 0.15f, 1.2f, dist);
+    }
+
+    /// <summary>Distance along the ray to where it enters the sphere (0 when the origin is already inside), or +inf on a miss.</summary>
+    private static float RayHit(Vector3 origin, Vector3 dir, Vector3 centre, float radius)
+    {
+        var oc = origin - centre;
+        float b = Vector3.Dot(oc, dir), c = oc.LengthSquared() - radius * radius;
+        if (c < 0) return float.PositiveInfinity;   // origin inside: nothing sensible to pull in to
+        float disc = b * b - c;
+        if (disc < 0) return float.PositiveInfinity;
+        float t = -b - MathF.Sqrt(disc);
+        return t > 0 ? t : float.PositiveInfinity;
     }
 
     /// <summary>Circle-vs-circle push-out against tree trunks, lamp posts and the other characters (two passes so corners settle).</summary>
@@ -491,7 +575,7 @@ public class Game1 : Game
         float aspect = pp.BackBufferWidth / (float)pp.BackBufferHeight;
 
         // Camera matrices
-        var camOffset = Vector3.Transform(new Vector3(0, 0, _camDist), Matrix.CreateRotationX(-_camPitch) * Matrix.CreateRotationY(_camYaw));
+        var camOffset = Vector3.Transform(new Vector3(0, 0, _camDistEffective), Matrix.CreateRotationX(-_camPitch) * Matrix.CreateRotationY(_camYaw));
         var camPos = _camTarget + camOffset;
         var view = Matrix.CreateLookAt(camPos, _camTarget, Vector3.Up);
         var proj = Matrix.CreatePerspectiveFieldOfView(MathHelper.ToRadians(38), aspect, 0.1f, 80f);
@@ -516,7 +600,7 @@ public class Game1 : Game
 
         // ---- Main pass
         string? shot = Program.Options.TryGetValue("shot", out var sp) ? sp : null;
-        if (shot != null && _shotTarget == null)
+        if ((shot != null || _recorder != null) && _shotTarget == null)
             _shotTarget = new RenderTarget2D(gd, pp.BackBufferWidth, pp.BackBufferHeight, false, SurfaceFormat.Color, DepthFormat.Depth24, 8, RenderTargetUsage.DiscardContents);
         var lighting = new SceneLighting
         {
@@ -606,6 +690,26 @@ public class Game1 : Game
         {
             Console.Error.WriteLine($"perf: {perf} frames, avg {_allocAvg:N0} B/frame allocated on the game thread, GC gen0/1/2 = {GC.CollectionCount(0) - _gcBase[0]}/{GC.CollectionCount(1) - _gcBase[1]}/{GC.CollectionCount(2) - _gcBase[2]}, last frame {_allocFrame:N0} B, CPU Update+Draw avg {_cpuMsTotal / Math.Max(1, _perfFrames - 2):0.00} ms max {_cpuMsMax:0.00} ms");
             Exit();
+        }
+        if (_script != null)
+        {
+            var focused = _focus >= 0 ? _characters[_focus] : null;
+            _recorder!.Log(_script.Time, _script.Current?.Text ?? "end", focused, _allocFrame, ms);
+            if (_shotTarget != null)
+            {
+                GraphicsDevice.SetRenderTargets(null);
+                _recorder.MaybeSave(_script.Time, _shotTarget, _pendingShotLabel);
+                _pendingShotLabel = null;
+            }
+            // Let the final state settle for a few frames so the last frame shows the outcome, then exit.
+            if (_scriptDone && _time - _scriptEndTime > 0.3f)
+            {
+                if (_shotTarget != null) _recorder.MaybeSave(_script.Time, _shotTarget, "final");
+                Console.Error.WriteLine($"playtest: {_script.Steps.Count} steps, {_script.Time:0.00} s, {_recorder.Saved.Count} frames saved");
+                _recorder.Dispose();
+                Exit();
+            }
+            return;
         }
         if (_shotTarget == null) return;
         GraphicsDevice.SetRenderTargets(null);

@@ -60,6 +60,7 @@ public sealed class Character
     public Clip Move { get; private set; } = null!;
     public float Speed;                 // world m/s
     private float _stridePhase;
+    public float StridePhase => _stridePhase;
     private Pose? _locoPose;
     public Clip? Action { get; private set; }
     public Clip? Queued;

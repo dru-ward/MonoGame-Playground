@@ -39,6 +39,9 @@ public sealed class Tree
     public int Triangles, Vertices;
     public float Radius = 0.25f;        // trunk collision radius (m)
     public float CrownHeight = 2.5f;     // where leaves are shed from
+    public float CrownRadius = 1.0f;     // overall foliage reach (coarse culling)
+    /// <summary>Foliage volumes in tree-local space (centre, radius) — every leaf blob / pine tier the builder emitted; used for camera collision.</summary>
+    public readonly List<(Vector3 c, float r)> Foliage = new();
     public Color[] LeafColors = Array.Empty<Color>();
     public Matrix World => Matrix.CreateRotationY(Yaw) * Matrix.CreateTranslation(Position);
 
@@ -77,11 +80,13 @@ public static class TreeBuilder
     private static readonly Vector2 Leaf = new(0.12f, 0.22f);
     private const byte LeafAlpha = 190;    // 255 = rigid; lower = more vertex flutter in the shader
     private const byte NeedleAlpha = 215;
+    private static List<(Vector3 c, float r)> _foliage = new();   // receives the volumes of the tree being built
 
     public static Tree Build(GraphicsDevice gd, TreeStyle style, int seed, float scale = 1f)
     {
         var rnd = new Random(seed);
         var tree = new Tree { Style = style, Phase = (float)rnd.NextDouble() * MathHelper.TwoPi };
+        _foliage = tree.Foliage;
         var sk = new Skeleton();
         sk.Add("root", null, Vector3.Zero, Vector3.Up * 0.1f);
         var mb = new MeshBuilder();
@@ -102,6 +107,8 @@ public static class TreeBuilder
         tree.LeafColors = style switch { TreeStyle.Oak => OakPalette.Leaves, TreeStyle.Maple => MaplePalette.Leaves, TreeStyle.Birch => BirchPalette.Leaves, _ => Array.Empty<Color>() };
         float topY = 0; foreach (var b in sk.Bones) topY = MathF.Max(topY, b.BindTail.Y);
         tree.CrownHeight = topY * 0.8f;
+        // Foliage reach from the trunk (branch length + blob radius), used as the camera-collision crown sphere.
+        tree.CrownRadius = style switch { TreeStyle.Pine => 1.3f, TreeStyle.Palm => 2.0f, TreeStyle.Birch => 1.3f, TreeStyle.Dead => 0.6f, TreeStyle.Maple => 2.1f, _ => 2.0f } * scale;
         (tree.VertexBuffer, tree.IndexBuffer) = mb.Upload(gd);
         tree.Triangles = mb.TriangleCount; tree.Vertices = mb.VertexCount;
         return tree;
@@ -206,6 +213,7 @@ public static class TreeBuilder
                                  byte alpha = LeafAlpha, int segs = 12, int stacks = 8)
     {
         float a = Rand(rnd, 0, 10), b = Rand(rnd, 0, 10), c = Rand(rnd, 0, 10);
+        _foliage.Add((center, (radii.X + radii.Y + radii.Z) / 3f));
         // Fake occlusion: the underside of a leaf mass is darker and bluer than the sunlit top.
         var shade = new Color((int)(color.R * 0.42f), (int)(color.G * 0.48f), (int)(color.B * 0.55f));
         mb.Ellipsoid(center, radii, segs, stacks, color, Leaf, w,
@@ -220,7 +228,8 @@ public static class TreeBuilder
 
     private static void BuildBroadleaf(MeshBuilder mb, Skeleton sk, Tree tree, Random rnd, float s, Palette pal, float crown, float spread)
     {
-        float height = Rand(rnd, 2.0f, 2.6f) * s;
+        // Crowns start above head height so a walking character (and the follow camera) pass under them.
+        float height = Rand(rnd, 2.7f, 3.3f) * s;
         var (trunkBones, path) = TrunkChain(sk, tree, rnd, height, 4, 0.12f, 0.35f);
 
         int branches = rnd.Next(5, 8);
@@ -229,11 +238,11 @@ public static class TreeBuilder
         float yaw0 = Rand(rnd, 0, MathHelper.TwoPi);
         for (int i = 0; i < branches; i++)
         {
-            float t = Rand(rnd, 0.45f, 0.92f);
+            float t = Rand(rnd, 0.62f, 0.95f);
             int seg = Math.Min((int)(t * 4), 3);
             var origin = Vector3.Lerp(path[seg], path[seg + 1], t * 4 - seg);
             float yaw = yaw0 + i * MathHelper.TwoPi / branches + Rand(rnd, -0.35f, 0.35f);
-            float pitch = Rand(rnd, 0.35f, 0.95f) * (1.1f - t * 0.5f);
+            float pitch = Rand(rnd, 0.45f, 1.0f) * (1.1f - t * 0.5f);
             var dir = Vector3.Normalize(new Vector3(MathF.Cos(yaw) * MathF.Cos(pitch) * spread, MathF.Sin(pitch), MathF.Sin(yaw) * MathF.Cos(pitch) * spread));
             float len = Rand(rnd, 0.9f, 1.4f) * s * (0.8f + 0.4f * (1 - t));
             var (tip, _) = Branch(sk, tree, rnd, trunkBones[seg], origin, dir, len, 1, 0.55f, droop: 0.15f);
@@ -322,6 +331,7 @@ public static class TreeBuilder
                 float y = top - v * h - 0.35f * h * MathF.Pow(v, 3) * (0.5f + 0.5f * MathF.Sin(th * lobes + ph));
                 return new Vector3(axis.X + MathF.Sin(th) * r, y, axis.Z + MathF.Cos(th) * r);
             }
+            _foliage.Add((new Vector3(axis.X, top - h * 0.5f, axis.Z), radius * 0.85f));
             var tipCol = new Color(Math.Min(255, col.R + 50), Math.Min(255, col.G + 60), Math.Min(255, col.B + 30));
             mb.Parametric(20, 6, Outer, (u, v) => Color.Lerp(tipCol, v > 0.85f ? dark : col, MathHelper.Clamp(v * 3f, 0, 1)), Leaf, w, alpha: NeedleAlpha);
             // Underside: rim inward to the trunk, darker.
@@ -345,7 +355,7 @@ public static class TreeBuilder
         float yaw0 = Rand(rnd, 0, MathHelper.TwoPi);
         for (int i = 0; i < branches; i++)
         {
-            float t = Rand(rnd, 0.4f, 0.95f);
+            float t = Rand(rnd, 0.58f, 0.95f);
             int seg = Math.Min((int)(t * 5), 4);
             var origin = Vector3.Lerp(path[seg], path[seg + 1], t * 5 - seg);
             float yaw = yaw0 + i * MathHelper.TwoPi / branches + Rand(rnd, -0.4f, 0.4f);
@@ -425,6 +435,7 @@ public static class TreeBuilder
         }
         rings.Add(new Ring(crown + Vector3.Up * 0.12f * s, 0.14f * s, pal.BarkDark, Bark));
         mb.Loft(rings, 10, w, Vector3.Backward, capEnd: true, capSteps: 2);
+        _foliage.Add((crown + Vector3.Up * 0.2f * s, 1.3f * s));
         // Coconuts.
         for (int i = 0; i < 3; i++)
             mb.Ellipsoid(crown + new Vector3(Rand(rnd, -0.14f, 0.14f), -0.05f, Rand(rnd, -0.14f, 0.14f)) * s, new Vector3(0.09f) * s, 8, 6, new Color(110, 84, 40), Mat.Wood, w);
