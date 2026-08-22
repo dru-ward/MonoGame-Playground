@@ -137,6 +137,55 @@ public static class TextureFactory
         return CreateWithMips(gd, size, HeightToNormal(height, size, size, 1.5f, wrap: true));
     }
 
+    // ------------------------------------------------------------------------------------------------ grass
+    /// <summary>
+    /// Overgrown grass tile (seamless): soft turf lumps + fine blade speckle, worn dirt patches, clover flecks,
+    /// a few daisies and half-buried stones. Same 512 px tiling scheme as the asphalt.
+    /// </summary>
+    private static float GrassHeight(int x, int y, int size, out float dirt)
+    {
+        float u = x / (float)size, v = y / (float)size;
+        float lumps = Noise(u * 24f, v * 24f, 24) * 0.10f + Noise(u * 64f + 2.7f, v * 64f + 5.1f, 64) * 0.06f;
+        float blades = Noise(u * 192f, v * 192f, 192) * 0.06f;
+        dirt = MathHelper.Clamp((Noise(u * 3f + 4.2f, v * 3f + 7.7f, 3) - 0.60f) / 0.14f, 0f, 1f);
+        return 0.5f + lumps + blades - dirt * 0.14f;
+    }
+
+    public static Texture2D CreateGrassAlbedo(GraphicsDevice gd, int size)
+    {
+        var data = new Color[size * size];
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            float u = x / (float)size, v = y / (float)size;
+            GrassHeight(x, y, size, out float dirt);
+            float patch = Noise(u * 6f + 1.3f, v * 6f + 9.1f, 6);                      // lush ↔ dry sward patches
+            var col = Vector3.Lerp(new Vector3(0.18f, 0.30f, 0.11f), new Vector3(0.34f, 0.37f, 0.14f), patch);
+            float blades = Noise(u * 192f, v * 192f, 192);                             // fine blade shimmer
+            col *= 0.80f + 0.45f * blades;
+            col *= 0.88f + 0.24f * Noise(u * 24f, v * 24f, 24);                        // turf lump shading
+            // worn dirt patches with a noisy edge
+            float dirtN = dirt * (0.65f + 0.5f * Noise(u * 40f + 3f, v * 40f + 6f, 40));
+            col = Vector3.Lerp(col, new Vector3(0.31f, 0.25f, 0.16f) * (0.8f + 0.4f * blades), MathHelper.Clamp(dirtN, 0f, 1f));
+            // clover flecks, the odd daisy, half-buried stones
+            float speck = Hash(x * 1973 + y * 7919);
+            if (speck > 0.992f) col *= 1.35f;
+            else if (speck < 0.0012f) col = new Vector3(0.72f, 0.70f, 0.55f);          // daisy
+            else if (speck > 0.9905f && dirt > 0.3f) col = new Vector3(0.42f, 0.41f, 0.38f);   // stone in a bare patch
+            data[y * size + x] = new Color(col.X, col.Y, col.Z, 1f);
+        }
+        return CreateWithMips(gd, size, data);
+    }
+
+    public static Texture2D CreateGrassNormal(GraphicsDevice gd, int size)
+    {
+        var height = new float[size * size];
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+            height[y * size + x] = GrassHeight(x, y, size, out _);
+        return CreateWithMips(gd, size, HeightToNormal(height, size, size, 1.2f, wrap: true));
+    }
+
     // ------------------------------------------------------------------------------------------------ crate
     private static float CrateHeight(int x, int y, int size)
     {

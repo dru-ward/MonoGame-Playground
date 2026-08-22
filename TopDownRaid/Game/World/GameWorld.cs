@@ -6,9 +6,12 @@ using Game.Items;
 
 namespace Game.World;
 
-public enum PropKind { WoodCrate, Container, Barrier, Sandbags, Rubble, FireBarrel, LampBase }
+public enum PropKind { WoodCrate, Container, Barrier, Sandbags, Rubble, FireBarrel, LampBase, Tree, Bush, CarWreck, Grass }
 
-/// <summary>Sizes / traits of the urban props (texture size == world size, drawn 1:1).</summary>
+/// <summary>Floor material of a map (picks the tiling texture and, for grass, scatters tufts).</summary>
+public enum FloorKind { Asphalt, Grass }
+
+/// <summary>Sizes / traits of the props. Size is the collision box; some sprites draw larger (DrawInflate).</summary>
 public static class PropDefs
 {
     public static Point Size(PropKind k) => k switch
@@ -20,12 +23,18 @@ public static class PropDefs
         PropKind.Rubble     => new Point(96, 96),
         PropKind.FireBarrel => new Point(40, 40),
         PropKind.LampBase   => new Point(32, 32),
+        PropKind.Tree       => new Point(56, 56),      // trunk only — the canopy overhangs (DrawInflate)
+        PropKind.Bush       => new Point(64, 64),
+        PropKind.CarWreck   => new Point(228, 104),
+        PropKind.Grass      => new Point(48, 48),      // decor tuft, never solid
         _ => new Point(96, 96),
     };
-    public static bool IsLong(PropKind k) => k is PropKind.Container or PropKind.Barrier or PropKind.Sandbags;
-    /// <summary>Lootable chance per kind (crates and containers are caches).</summary>
-    public static float LootChance(PropKind k) => k switch { PropKind.WoodCrate => 0.5f, PropKind.Container => 0.6f, _ => 0f };
-    public static string Name(PropKind k) => k switch { PropKind.WoodCrate => "CRATE", PropKind.Container => "CONTAINER", _ => k.ToString().ToUpperInvariant() };
+    /// <summary>Extra pixels the sprite extends past the collision box on each side (tree canopies).</summary>
+    public static int DrawInflate(PropKind k) => k switch { PropKind.Tree => 62, PropKind.Bush => 8, _ => 0 };
+    public static bool IsLong(PropKind k) => k is PropKind.Container or PropKind.Barrier or PropKind.Sandbags or PropKind.CarWreck;
+    /// <summary>Lootable chance per kind (crates and containers are caches, car boots hold odds and ends).</summary>
+    public static float LootChance(PropKind k) => k switch { PropKind.WoodCrate => 0.5f, PropKind.Container => 0.6f, PropKind.CarWreck => 0.4f, _ => 0f };
+    public static string Name(PropKind k) => k switch { PropKind.WoodCrate => "CRATE", PropKind.Container => "CONTAINER", PropKind.CarWreck => "CAR BOOT", _ => k.ToString().ToUpperInvariant() };
 }
 
 /// <summary>A solid prop on the floor. Some are lootable containers that can be opened (E) or shot open.</summary>
@@ -120,8 +129,12 @@ public sealed class GameWorld
             if (overlaps) continue;
             bool lootable = rng.NextDouble() < PropDefs.LootChance(kind);
             Crates.Add(new Crate { Kind = kind, Vertical = vertical, Bounds = r, Lootable = lootable, Loot = lootable ? (kind == PropKind.Container ? LootTable.Cache : LootTable.Crate) : null,
-                                   Health = kind == PropKind.Container ? 5f : 3f });
+                                   Health = kind switch { PropKind.Container => 5f, PropKind.CarWreck => 6f, _ => 3f } });
         }
+        // grass floors get a scatter of walk-through tufts
+        if (map.Floor == FloorKind.Grass)
+            for (int i = Size * Size / 26000; i > 0; i--)
+                Decor.Add((new Vector2(rng.Next(30, Size - 30), rng.Next(30, Size - 30)), PropKind.Grass));
         // barriers like to come in pairs: extend some barriers with a second segment end-to-end
         int n = Crates.Count;
         for (int i = 0; i < n; i++)

@@ -87,13 +87,7 @@ public sealed class RenderPipeline : IDisposable
         Effect.Parameters["BloomThreshold"].SetValue(0.6f);
         Effect.Parameters["BloomSoftKnee"].SetValue(0.5f);
         Effect.Parameters["NormalRotation"].SetValue(new Vector2(1f, 0f));
-        // grungy urban grade: pull saturation, cool the shadows, warm the highlights, add contrast + grain
-        Effect.Parameters["Desaturate"].SetValue(0.30f);
-        Effect.Parameters["GradeShadows"].SetValue(new Vector3(0.82f, 0.90f, 1.05f));
-        Effect.Parameters["GradeHighlights"].SetValue(new Vector3(1.10f, 1.02f, 0.90f));
-        Effect.Parameters["Contrast"].SetValue(1.08f);
-        Effect.Parameters["GrainAmount"].SetValue(0.07f);
-        Effect.Parameters["VignetteStrength"].SetValue(0.62f);
+        SetGrade(daylight: false);
         Effect.Parameters["VignetteRadius"].SetValue(0.85f);
         Effect.Parameters["VignetteSoftness"].SetValue(0.55f);
         _pTime = Effect.Parameters["Time"];
@@ -103,6 +97,20 @@ public sealed class RenderPipeline : IDisposable
         for (int i = 0; i < BlurTaps; i++) _blurWeights[i] /= sum;
 
         EnsureRenderTargets();
+    }
+
+    /// <summary>
+    /// Colour grade preset. Night = grungy urban (desaturated, cool shadows, warm highlights, heavy vignette,
+    /// grain); daylight = a light touch so bright outdoor maps keep their colour.
+    /// </summary>
+    public void SetGrade(bool daylight)
+    {
+        Effect.Parameters["Desaturate"].SetValue(daylight ? 0.10f : 0.30f);
+        Effect.Parameters["GradeShadows"].SetValue(daylight ? new Vector3(0.96f, 0.99f, 0.98f) : new Vector3(0.82f, 0.90f, 1.05f));
+        Effect.Parameters["GradeHighlights"].SetValue(daylight ? new Vector3(1.06f, 1.03f, 0.95f) : new Vector3(1.10f, 1.02f, 0.90f));
+        Effect.Parameters["Contrast"].SetValue(daylight ? 1.04f : 1.08f);
+        Effect.Parameters["GrainAmount"].SetValue(daylight ? 0.035f : 0.07f);
+        Effect.Parameters["VignetteStrength"].SetValue(daylight ? 0.28f : 0.62f);
     }
 
     /// <summary>(Re)creates the render targets whenever the back buffer size changes.</summary>

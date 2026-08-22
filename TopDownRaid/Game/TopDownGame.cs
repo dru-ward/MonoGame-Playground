@@ -14,8 +14,9 @@
 //    Meta/       Profile (stash/loadout/stats, JSON save), Raid (one deployment)
 //    UI/         Hud, InventoryScreen, MetaScreens (menu/stash/map/summary), UiDraw
 //
-//  Controls (raid): WASD move · Shift sprint · Mouse aim · LMB fire · R reload · Q swap · E search body / open crate
-//                   Tab/I inventory · 1-5 hotbar · Wheel zoom · Space pause · Esc = abandon raid (counts as MIA)
+//  Controls (raid): WASD move · Shift sprint · Mouse aim · LMB fire · R reload · Q swap · T torch/laser toggle
+//                   E search body / open crate / take floor item · Tab/I inventory (LMB use, drag move, RMB inspect)
+//                   1-5 hotbar · Wheel zoom · Space pause · Esc = abandon raid (counts as MIA)
 //  Debug: F1 wireframe · F2 scissor · F3 bloom · F4 light mode · F5-F10 buffer views · F11 HUD text · F12 screenshot
 //  Env: GAME1_SCREENSHOT, GAME1_SHOT_DELAY, GAME1_VIEW, GAME1_ZOOM, GAME1_BOT=1, GAME1_SPAWN_DIST, GAME1_UI=inv|loot,
 //       GAME1_STATE=menu|stash|map|raid|summary (start there), GAME1_MAP=<id>, GAME1_NOSAVE=1
@@ -94,8 +95,9 @@ public sealed class TopDownGame : Microsoft.Xna.Framework.Game
         _particles = new ParticleSystem(gd, TextureFactory.CreateParticle(gd, 64));
         _font = new PixelFont(gd);
         var floor = new SpritePair(TextureFactory.CreateAsphaltAlbedo(gd, 512), TextureFactory.CreateAsphaltNormal(gd, 512));
+        var grass = new SpritePair(TextureFactory.CreateGrassAlbedo(gd, 512), TextureFactory.CreateGrassNormal(gd, 512));
         var icons = ItemArt.CreateAll(gd);
-        _assets = new RaidAssets { Floor = floor, Props = PropArt.CreateAll(gd), Icons = icons, AttachArt = AttachmentArt.CreateAll(gd), Particles = _particles, Device = gd };
+        _assets = new RaidAssets { Floor = floor, GrassFloor = grass, Props = PropArt.CreateAll(gd), Icons = icons, AttachArt = AttachmentArt.CreateAll(gd), Particles = _particles, Device = gd };
 
         _hud = new Hud(_font, _pipeline.Pixel, icons);
         _inventoryScreen = new InventoryScreen(_font, _pipeline.Pixel, icons);
@@ -141,6 +143,7 @@ public sealed class TopDownGame : Microsoft.Xna.Framework.Game
         _raid = new Raid(_assets, map, _profile.Loadout, _input);
         _raid.Player.LootRequested += src => _inventoryScreen.OpenWith(_raid.Player, src);
         _pipeline.Ambient = new Vector4(map.Ambient, 0f);
+        _pipeline.SetGrade(map.Daylight);
         if (float.TryParse(Environment.GetEnvironmentVariable("GAME1_ZOOM"), out float z)) _raid.Camera.TargetZoom = _raid.Camera.Zoom = z;
         if (_bot) _raid.BotMode = true;
         _paused = false; _state = GameState.Raid;

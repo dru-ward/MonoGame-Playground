@@ -17,6 +17,7 @@ public enum RaidOutcome { None, Extracted, Killed, TimedOut }
 public sealed class RaidAssets
 {
     public required SpritePair Floor;
+    public required SpritePair GrassFloor;
     public required Dictionary<(PropKind, bool), SpritePair> Props;
     public required Dictionary<ItemType, SpritePair> Icons;
     public required Dictionary<ItemType, SpritePair> AttachArt;
@@ -129,7 +130,7 @@ public sealed class Raid
         Enemies.Update(dt, Ctx);
         Projectiles.Update(dt, Enemies.HittableCharacters(Player));
         Grenades.Update(dt, Enemies.HittableCharacters(Player), Enemies);
-        Pickups.Update(dt, Player.Position, Player.IsAlive, Player.Collect, World);
+        Pickups.Update(dt, World);
         UpdateEnvironment(dt);
         Lights.Update(dt);
         foreach (var c in World.Crates) c.HitFlash = MathF.Max(0f, c.HitFlash - dt * 6f);
@@ -209,7 +210,7 @@ public sealed class Raid
     /// <summary>Called twice per frame by the pipeline (albedo pass, normal pass). Painter's order, back to front.</summary>
     public void DrawScene(SceneBatch batch, RectangleF visible)
     {
-        batch.DrawTiled(_a.Floor, World.Bounds);
+        batch.DrawTiled(Map.Floor == FloorKind.Grass ? _a.GrassFloor : _a.Floor, World.Bounds);
         foreach (var (zone, _, marker, _) in _extractFx)
             if (visible.Inflate(200).Intersects(zone.Area)) batch.Draw(marker, zone.Center, 1f);
         foreach (var (pos, kind) in World.Decor)
@@ -217,11 +218,13 @@ public sealed class Raid
         Pickups.Draw(batch);
         foreach (var c in World.Crates)
         {
-            if (!visible.Inflate(120).Intersects(c.Bounds)) continue;
+            if (!visible.Inflate(180).Intersects(c.Bounds)) continue;
             Color tint = Color.White;
             if (c.Lootable) tint = c.Opened ? new Color(120, 110, 100) : new Color(255, 240, 200);
             if (c.HitFlash > 0f) tint = Color.Lerp(tint, Color.White, c.HitFlash);
-            batch.DrawRect(_a.Props[(c.Kind, c.Vertical)], c.Bounds, tint);
+            var dr = c.Bounds; int inf = PropDefs.DrawInflate(c.Kind);           // tree canopies overhang their trunk
+            if (inf > 0) dr.Inflate(inf, inf);
+            batch.DrawRect(_a.Props[(c.Kind, c.Vertical)], dr, tint);
         }
         Grenades.Draw(batch);
         Enemies.Draw(batch, visible);

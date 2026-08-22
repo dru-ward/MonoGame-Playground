@@ -32,6 +32,7 @@ public sealed class InputState
     public bool MouseInWindow => WindowActive && Viewport.Contains(_mouse.X, _mouse.Y);
     public bool LeftDown     => MouseInWindow && _mouse.LeftButton == ButtonState.Pressed;
     public bool LeftPressed  => MouseInWindow && _mouse.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
+    public bool LeftReleased => _mouse.LeftButton == ButtonState.Released && _prevMouse.LeftButton == ButtonState.Pressed;
     public bool RightDown    => MouseInWindow && _mouse.RightButton == ButtonState.Pressed;
     public bool RightPressed => MouseInWindow && _mouse.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
     public int  ScrollDelta  => _mouse.ScrollWheelValue - _prevMouse.ScrollWheelValue;

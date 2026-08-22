@@ -24,7 +24,8 @@ public sealed record MapDef(
     string Id, string Name, string Difficulty, string Description,
     int Seed, int Size, int PropCount, int LampGrid, float ColdLampChance,
     int StartEnemies, int MaxAlive, float GunnerChance, float SpawnMinDistance,
-    Vector3 Ambient, float RaidMinutes, IReadOnlyList<ExtractDef> Extracts, IReadOnlyDictionary<PropKind, float> PropWeights)
+    Vector3 Ambient, float RaidMinutes, IReadOnlyList<ExtractDef> Extracts, IReadOnlyDictionary<PropKind, float> PropWeights,
+    FloorKind Floor = FloorKind.Asphalt, bool Daylight = false)
 {
     public static readonly MapDef Scrapyard = new(
         "scrapyard", "SCRAPYARD", "EASY",
@@ -53,6 +54,16 @@ public sealed record MapDef(
         Extracts: new[] { new ExtractDef("LOADING BAY", 0.92f, 0.92f), new ExtractDef("HOLE IN FENCE", 0.08f, 0.08f, 120, 120) },
         PropWeights: new Dictionary<PropKind, float> { [PropKind.Barrier] = 30, [PropKind.Sandbags] = 26, [PropKind.Rubble] = 20, [PropKind.WoodCrate] = 14, [PropKind.FireBarrel] = 18, [PropKind.Container] = 6 });
 
-    public static readonly IReadOnlyList<MapDef> All = new[] { Scrapyard, Docks, Factory };
+    public static readonly MapDef Meadow = new(
+        "meadow", "MEADOW", "MEDIUM",
+        "Overgrown fields in broad daylight. Tree lines, wrecked cars with lootable boots, old supply drops. Long sightlines, nowhere dark to hide.",
+        Seed: 2024, Size: 3584, PropCount: 96, LampGrid: 0, ColdLampChance: 0f,
+        StartEnemies: 5, MaxAlive: 9, GunnerChance: 0.55f, SpawnMinDistance: 1000f,
+        Ambient: new(1.10f, 1.06f, 0.92f), RaidMinutes: 9f,
+        Extracts: new[] { new ExtractDef("FARM TRACK", 0.94f, 0.5f, 140, 220), new ExtractDef("RIVER FORD", 0.06f, 0.88f), new ExtractDef("TREELINE GAP", 0.5f, 0.06f, 220, 140) },
+        PropWeights: new Dictionary<PropKind, float> { [PropKind.Tree] = 34, [PropKind.Bush] = 18, [PropKind.CarWreck] = 14, [PropKind.WoodCrate] = 12, [PropKind.Rubble] = 6, [PropKind.Sandbags] = 6 },
+        Floor: FloorKind.Grass, Daylight: true);
+
+    public static readonly IReadOnlyList<MapDef> All = new[] { Scrapyard, Docks, Factory, Meadow };
     public static MapDef ById(string id) { foreach (var m in All) if (m.Id == id) return m; return Scrapyard; }
 }

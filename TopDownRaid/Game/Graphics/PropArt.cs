@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -42,9 +43,11 @@ public static class PropArt
     private static SpritePair Create(GraphicsDevice gd, PropKind kind, bool vertical)
     {
         var size = PropDefs.Size(kind);
-        int w = size.X, h = size.Y;
+        int inflate = PropDefs.DrawInflate(kind);                       // canopy sprites draw past their collision box
+        int w = size.X + inflate * 2, h = size.Y + inflate * 2;
         Vector3 concrete = new(0.46f, 0.45f, 0.42f), rust = new(0.36f, 0.20f, 0.12f), steel = new(0.17f, 0.22f, 0.28f);
         Vector3 dark = new(0.08f, 0.08f, 0.08f), sand = new(0.52f, 0.46f, 0.33f), rock = new(0.30f, 0.30f, 0.29f);
+        Vector3 leaf = new(0.13f, 0.22f, 0.08f), leafHi = new(0.23f, 0.34f, 0.12f), glass = new(0.05f, 0.07f, 0.08f);
         ShapeSprite s;
         switch (kind)
         {
@@ -117,6 +120,63 @@ public static class PropArt
                 s = new ShapeSprite(w, h) { GrimeAmount = 0.3f, GrimeSeed = 17 };
                 s.Circle(0f, 0f, 14f, concrete * 0.8f, 0.5f, 0.3f);
                 s.Circle(0f, 0f, 6f, steel * 0.7f, 1.2f, 0.9f, 0.5f);
+                break;
+
+            case PropKind.Tree:
+                // top-down canopy: dark skirt, lobed crown, lit clusters toward the upper-left
+                s = new ShapeSprite(w, h) { GrimeAmount = 0.25f, GrimeSeed = 23, GrimeScale = 0.05f };
+                s.Circle(0f, 0f, w * 0.48f, leaf * 0.5f, 0.15f, 0.35f);
+                s.Circle(0f, 0f, w * 0.42f, leaf, 0.7f, 0.65f, 0.5f);
+                for (int i = 0; i < 6; i++)                                                             // rim lobes
+                {
+                    float a = i * MathHelper.TwoPi / 6f + 0.4f, rr = w * (0.30f + 0.04f * (i % 3));
+                    s.Ellipse(MathF.Cos(a) * rr, MathF.Sin(a) * rr, w * 0.16f, w * 0.13f, leaf * (0.85f + 0.15f * (i % 2)), 0.8f, 0.9f, 0.5f);
+                }
+                s.Ellipse(-w * 0.16f, -w * 0.14f, w * 0.18f, w * 0.15f, leafHi, 0.95f, 0.9f, 0.5f);     // sunlit side
+                s.Ellipse(w * 0.10f, -w * 0.19f, w * 0.13f, w * 0.11f, leaf * 1.25f, 0.9f, 0.9f, 0.5f);
+                s.Ellipse(w * 0.16f, w * 0.12f, w * 0.14f, w * 0.12f, leaf * 0.8f, 0.85f, 0.9f, 0.5f);  // shaded side
+                s.Circle(-w * 0.05f, -w * 0.05f, w * 0.09f, leafHi * 1.15f, 1.0f, 0.9f, 0.5f);
+                break;
+
+            case PropKind.Bush:
+                s = new ShapeSprite(w, h) { GrimeAmount = 0.3f, GrimeSeed = 29, GrimeScale = 0.1f };
+                s.Circle(0f, 0f, w * 0.45f, leaf * 0.45f, 0.15f, 0.35f);
+                s.Ellipse(-w * 0.15f, -w * 0.08f, w * 0.28f, w * 0.23f, leaf * 0.9f, 0.65f, 0.85f, 0.5f);
+                s.Ellipse(w * 0.15f, w * 0.05f, w * 0.25f, w * 0.20f, leaf * 1.1f, 0.7f, 0.85f, 0.5f);
+                s.Ellipse(0f, w * 0.13f, w * 0.22f, w * 0.17f, leaf * 0.8f, 0.65f, 0.85f, 0.5f);
+                s.Ellipse(-w * 0.05f, -w * 0.15f, w * 0.15f, w * 0.12f, leafHi, 0.8f, 0.9f, 0.5f);
+                break;
+
+            case PropKind.CarWreck:
+                // abandoned saloon seen from above: faded paint, dark glass, rust blooms, tires poking out
+                s = new ShapeSprite(w, h, vertical) { GrimeAmount = 0.5f, GrimeSeed = 31, GrimeScale = 0.07f };
+                Vector3 body = new(0.18f, 0.26f, 0.28f);
+                foreach (float tx in new[] { -w * 0.32f, w * 0.32f })                                   // tires
+                {
+                    s.Box(tx - 15f, -h / 2f + 1f, tx + 15f, -h / 2f + 12f, dark, 0.5f, 0.2f);
+                    s.Box(tx - 15f, h / 2f - 12f, tx + 15f, h / 2f - 1f, dark, 0.5f, 0.2f);
+                }
+                s.Box(-w / 2f + 6f, -h / 2f + 10f, w / 2f - 6f, h / 2f - 10f, body * 0.85f, 0.8f, 0.45f);   // shell
+                s.Box(-w / 2f + 10f, -h / 2f + 14f, -w * 0.16f, h / 2f - 14f, body, 0.9f, 0.5f);            // bonnet
+                s.Box(w * 0.20f, -h / 2f + 14f, w / 2f - 10f, h / 2f - 14f, body * 1.05f, 0.9f, 0.5f);      // boot
+                s.Box(-w * 0.13f, -h / 2f + 13f, w * 0.17f, h / 2f - 13f, body * 1.2f, 1.0f, 0.55f);        // roof
+                s.Box(-w * 0.20f, -h / 2f + 16f, -w * 0.13f, h / 2f - 16f, glass, 0.95f, 0.2f);             // windscreen
+                s.Box(w * 0.17f, -h / 2f + 16f, w * 0.24f, h / 2f - 16f, glass, 0.95f, 0.2f);               // rear glass
+                s.Ellipse(-w * 0.35f, -h * 0.2f, 20f, 12f, rust, 0.85f, 0.3f);
+                s.Ellipse(w * 0.33f, h * 0.18f, 16f, 10f, rust * 0.85f, 0.85f, 0.3f);
+                s.Ellipse(w * 0.05f, -h * 0.28f, 12f, 8f, rust * 0.7f, 0.9f, 0.3f);
+                break;
+
+            case PropKind.Grass:
+                // walk-through tuft: a fan of blades radiating from the base
+                s = new ShapeSprite(w, h);
+                for (int i = 0; i < 8; i++)
+                {
+                    float a = i * MathHelper.TwoPi / 8f + (i * 37 % 5) * 0.11f;
+                    float len = w * 0.26f + (i * 53 % 7) * 1.5f;
+                    s.Capsule(0f, 0f, MathF.Cos(a) * len, MathF.Sin(a) * len, 1.6f, leaf * (0.85f + 0.12f * (i % 3)), 0.7f, 0.9f);
+                }
+                s.Circle(0f, 0f, 4f, leafHi * 0.9f, 0.8f, 0.9f);
                 break;
 
             default:

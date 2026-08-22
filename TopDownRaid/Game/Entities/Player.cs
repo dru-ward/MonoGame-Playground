@@ -43,6 +43,8 @@ public sealed class Player : Character
     public float MaxArmor => Vest is { } v ? GearDef.For(v)!.MaxArmor : 0f;
     public bool IsSprinting { get; private set; }
     public bool InventoryOpen;
+    public bool TacticalOn = true;                    // torch/laser attachments on the current weapon ([T] toggles)
+    private bool _triggerLocked = true;               // LMB must be released after UI close (or spawn) before it fires
     public LootSource? OpenLoot;
     public float RespawnTimer;
     public bool RespawnEnabled = true;
@@ -50,6 +52,7 @@ public sealed class Player : Character
     public string? Toast; public float ToastTimer;
     public Crate? NearbyLootable;
     public Enemy? NearbyBody;
+    public Pickup? NearbyPickup;
     public float DamageFlash;
     public int Gold;
     public bool BotMode;
@@ -128,6 +131,11 @@ public sealed class Player : Character
             if (input.Pressed(Keys.Q)) SwitchWeapon();
             if (input.Pressed(Keys.R)) TryReload();
             if (input.Pressed(Keys.G)) ThrowGrenade(ctx);
+            if (input.Pressed(Keys.T) && (CurrentWeapon.HasTorch || CurrentWeapon.HasLaser))
+            {
+                TacticalOn = !TacticalOn;
+                ShowToast((CurrentWeapon.HasTorch ? "Torch" : "Laser") + (TacticalOn ? " on" : " off"));
+            }
         }
 
         // ---- movement -------------------------------------------------------------------------------------
@@ -159,7 +167,9 @@ public sealed class Player : Character
 
         // ---- weapon ---------------------------------------------------------------------------------------
         var w = CurrentWeapon; w.Update(dt);
-        bool trigger = (input.LeftDown || (BotMode && botTarget != null)) && !InventoryOpen;
+        if (InventoryOpen) _triggerLocked = true;
+        else if (!input.LeftDown) _triggerLocked = false;
+        bool trigger = ((input.LeftDown && !_triggerLocked) || (BotMode && botTarget != null)) && !InventoryOpen;
         if (w.Def.IsMelee) UpdateMelee(dt, trigger, ctx);
         else
         {
@@ -183,19 +193,27 @@ public sealed class Player : Character
             _muzzle.Position = MuzzleWorld(); _muzzle.Intensity = w.Flash * w.Def.MuzzleFlash * w.FlashMul;
         }
         // torch attachment: cone light from the muzzle along the aim
-        bool torch = !w.Def.IsMelee && w.HasTorch;
+        bool torch = !w.Def.IsMelee && w.HasTorch && TacticalOn;
         _torch.Intensity = torch ? 2.4f : 0f;
         if (torch) { _torch.Position = MuzzleWorld(); _torch.Direction = MathUtil.FromAngle(Facing + ArmsAngle); }
-        if (!w.Def.IsMelee && w.HasLaser) DrawLaser(ctx);
+        if (!w.Def.IsMelee && w.HasLaser && TacticalOn) DrawLaser(ctx);
         _lantern.Position = Position; _lantern.Height = 110f + 4f * MathF.Sin(StridePhase); _lantern.Intensity = 0.9f;
         AnimateArms(dt, w);
 
-        // ---- interaction: bodies first, then crates ---------------------------------------------------------
+        // ---- interaction: bodies first, then the nearest of floor item / crate ------------------------------
         NearbyBody = ctx.Enemies.FindLootableBodyNear(Position, LootReach + 10f);
+        NearbyPickup = NearbyBody == null ? ctx.Pickups.FindNearest(Position, LootReach) : null;
         NearbyLootable = NearbyBody == null ? ctx.World.FindLootableNear(Position, LootReach) : null;
+        if (NearbyPickup != null && NearbyLootable != null)
+        {
+            if ((NearbyPickup.Position - Position).LengthSquared() <= (NearbyLootable.Center - Position).LengthSquared()) NearbyLootable = null;
+            else NearbyPickup = null;
+        }
+        if (BotMode && NearbyPickup != null) ctx.Pickups.TryCollect(NearbyPickup, Collect);   // bots still hoover
         if (!InventoryOpen && input.Pressed(Keys.E))
         {
             if (NearbyBody != null) SearchBody(NearbyBody);
+            else if (NearbyPickup != null) ctx.Pickups.TryCollect(NearbyPickup, Collect);
             else if (NearbyLootable != null) OpenCrate(NearbyLootable);
         }
         if (OpenLoot != null && (OpenLoot.Position - Position).Length() > LootReach + 90f) CloseLoot();
@@ -227,8 +245,8 @@ public sealed class Player : Character
         foreach (var e in ctx.Enemies.Alive)
             if (Collision.SegmentVsCircle(from, from + dir * len, e.Position, e.Radius, out float et)) len *= et;
         var mid = from + dir * (len * 0.5f);
-        ctx.Particles.AddQuad(mid, Facing + ArmsAngle, 0.8f, len * 0.5f / 0.8f, new Vector3(1.2f, 0.12f, 0.1f));
-        ctx.Particles.AddQuad(from + dir * len, 0f, 2.5f, 1f, new Vector3(2.0f, 0.3f, 0.2f));
+        ctx.Particles.AddQuad(mid, Facing + ArmsAngle, 2.0f, len * 0.5f / 2.0f, new Vector3(1.0f, 0.10f, 0.08f));
+        ctx.Particles.AddQuad(from + dir * len, 0f, 5f, 1f, new Vector3(1.0f, 0.25f, 0.2f));
     }
 
     // ================================================================================================= melee
@@ -341,6 +359,32 @@ public sealed class Player : Character
         return true;
     }
 
+    /// <summary>Equips a gun from a bag slot into a specific weapon slot (drag &amp; drop). Replaces what's there.</summary>
+    public bool EquipFromSlotAt(int slot, int weaponIndex)
+    {
+        var stack = Inventory[slot];
+        if (stack.IsEmpty || !stack.Def.IsWeapon) return false;
+        if (weaponIndex < 0 || weaponIndex >= Weapons.Count) return EquipFromSlot(slot);   // empty slot → append
+        var def = WeaponDef.ForGunItem(stack.Type);
+        Inventory.ConsumeFromSlot(slot);
+        var old = Weapons[weaponIndex];
+        Weapons[weaponIndex] = new Weapon(def, fullMag: true);
+        if (old.Def.GunItem is { } gi && Inventory.Add(gi, 1) > 0) ShowToast($"Bag full - lost {old.Def.Name}");
+        foreach (var a in old.Attachments.Values) Inventory.Add(a, 1);
+        if (weaponIndex == WeaponIndex) { HeldWeapon = def.Held; _swapAnim = 1f; }
+        RefreshVisuals(); ShowToast($"Equipped {def.Name}");
+        return true;
+    }
+
+    /// <summary>Swaps two weapon slots (drag &amp; drop), keeping the selection on the same weapon.</summary>
+    public void ReorderWeapons(int a, int b)
+    {
+        if (a == b || a < 0 || b < 0 || a >= Weapons.Count || b >= Weapons.Count) return;
+        (Weapons[a], Weapons[b]) = (Weapons[b], Weapons[a]);
+        if (WeaponIndex == a) WeaponIndex = b; else if (WeaponIndex == b) WeaponIndex = a;
+        RefreshVisuals();
+    }
+
     public bool Unequip(int weaponIndex)
     {
         if (Weapons.Count <= 1 || weaponIndex < 0 || weaponIndex >= Weapons.Count) return false;
@@ -355,11 +399,15 @@ public sealed class Player : Character
     }
 
     /// <summary>Fits an attachment from a bag slot onto the current weapon (displaced one goes back to the bag).</summary>
-    public bool AttachFromSlot(int slot)
+    public bool AttachFromSlot(int slot) => AttachFromSlotTo(slot, WeaponIndex);
+
+    /// <summary>Fits an attachment from a bag slot onto a specific weapon (drag &amp; drop).</summary>
+    public bool AttachFromSlotTo(int slot, int weaponIndex)
     {
+        if (weaponIndex < 0 || weaponIndex >= Weapons.Count) return false;
         var stack = Inventory[slot];
         if (stack.IsEmpty || !stack.Def.IsAttachment) return false;
-        var w = CurrentWeapon;
+        var w = Weapons[weaponIndex];
         if (w.Def.IsMelee || !w.TryAttach(stack.Type, out var replaced)) { ShowToast($"{stack.Def.Name} does not fit the {w.Def.Name}"); return false; }
         Inventory.ConsumeFromSlot(slot);
         if (replaced is { } r) Inventory.Add(r, 1);

@@ -96,6 +96,11 @@ public sealed class Hud
             var sp = ctx.Camera.WorldToScreen(p.NearbyBody.Position);
             Centered(sb, "[E] SEARCH BODY", sp.Y - 50f * ctx.Camera.Zoom, new Color(255, 230, 150), 2f, (int)(sp.X * 2));
         }
+        else if (p.NearbyPickup != null && p.IsAlive && !p.InventoryOpen)
+        {
+            var sp = ctx.Camera.WorldToScreen(p.NearbyPickup.Position);
+            Centered(sb, $"[E] TAKE {p.NearbyPickup.Def.Name.ToUpperInvariant()}{(p.NearbyPickup.Stack.Count > 1 ? $" x{p.NearbyPickup.Stack.Count}" : "")}", sp.Y - 40f * ctx.Camera.Zoom, new Color(255, 230, 150), 2f, (int)(sp.X * 2));
+        }
         else if (p.NearbyLootable != null && p.IsAlive && !p.InventoryOpen)
         {
             var sp = ctx.Camera.WorldToScreen(p.NearbyLootable.Center);

@@ -16,7 +16,9 @@ is always safe. If the loadout has no gun a free pistol is issued. Profile (stas
 in `%LocalAppData%\TopDownRaid\profile.json`.
 
 Maps (`World/MapDef.cs`): **Scrapyard** (easy, 3072², 2 exits, 8 min), **Docks** (medium, 3584², container stacks,
-cold floods, 3 exits, 10 min), **Factory** (hard, 2560², barriers + sandbags, barrels for light, 2 exits, 7 min). Each
+cold floods, 3 exits, 10 min), **Factory** (hard, 2560², barriers + sandbags, barrels for light, 2 exits, 7 min),
+**Meadow** (medium, 3584², outdoor daylight: grass floor with scattered tufts, tree lines, bushes, wrecked cars with
+lootable boots, bright ambient, no lamps, 3 exits, 9 min). Each
 defines seed, size, prop mix, lamps, enemy pressure, ambient and extract positions; the map cards show a real layout preview.
 
 ## Gameplay
@@ -47,10 +49,12 @@ defines seed, size, prop mix, lamps, enemy pressure, ambient and extract positio
   small random deflection, up to 2–3 bounces, spark burst + flash light) — grazing hits always bounce.
 - **Loot**: light-tinted crates and shipping containers (caches: better gear/attachments) open into the **same loot
   screen as bodies** (`E`); shooting or blasting them open spills the same contents on the floor instead. Pickups
-  pop out, slide, sparkle, magnetise toward you and auto-collect.
+  pop out, slide and sparkle; walk up and press `E` to take the nearest one (nothing is auto-collected).
 - **Inventory screen** (`Tab`/`I`): weapon slots (ammo + spare mags), 15-slot backpack (first row = hotbar
-  `1-5`), hover details with weapon stats, LMB use/equip, RMB drop, Ctrl+LMB stash into an open container, and a
-  container column while searching a body (LMB take, `F` take all). Items: 5.56/9mm/SMG mags, shells, Bandage
+  `1-5`), hover details with weapon stats, LMB use/equip, **drag & drop** to move/swap slots, stash into or take
+  from an open container, re-order weapons, fit attachments or replace an equipped gun (drag out of the panel =
+  drop on the floor), RMB **inspect** (guns show their four attachment slots — drag attachments straight in/out),
+  Ctrl+LMB stash, and a container column while searching a body (LMB take, `F` take all). Items: 5.56/9mm/SMG mags, shells, Bandage
   (+20), Medkit (+60), Armor Plate (+50 armor, absorbs 60 %), gold coins (score), guns.
 - Death: 3 s respawn at the start with full health; score persists.
 
@@ -80,8 +84,9 @@ the extraction path, `GAME1_RES=2560x1440 GAME1_ZOOM=0.5` + `GAME1_SCREENSHOT` f
 | `W A S D` / arrows, `Shift` | Move / sprint |
 | Mouse, LMB | Aim, fire (rifle auto, pistol semi) |
 | `R`, `Q` | Reload, swap weapon |
-| `E` | Search body / open lootable crate or container |
+| `E` | Search body / open lootable crate / pick up floor item |
 | `G` | Throw grenade (toward the cursor) |
+| `T` | Toggle torch / laser attachment on the current weapon |
 | `Tab` / `I`, `1-5` | Inventory screen, use hotbar slot |
 | `F` (in loot screen) | Take all |
 | Wheel | Zoom |

@@ -62,7 +62,7 @@ public sealed class LootTable
         .Add(ItemType.Optic, 0.5f, 1, 1).Add(ItemType.Grip, 0.4f, 1, 1).Add(ItemType.Laser, 0.3f, 1, 1).Add(ItemType.Compensator, 0.3f, 1, 1);
 }
 
-/// <summary>An item stack lying on the floor. Bobs, gets magnetised toward a nearby player and is auto-collected.</summary>
+/// <summary>An item stack lying on the floor. Bobs and sparkles until picked up with [E].</summary>
 public sealed class Pickup
 {
     public ItemStack Stack;
@@ -74,11 +74,9 @@ public sealed class Pickup
     public ItemDef Def => Stack.Def;
 }
 
-/// <summary>Owns all pickups: spawning bursts from crates/enemies, magnet + collect, and drawing.</summary>
+/// <summary>Owns all pickups: spawning bursts from crates/enemies, [E] pick-up, and drawing.</summary>
 public sealed class PickupManager
 {
-    public const float MagnetRange = 90f;
-    public const float CollectRange = 26f;
     private readonly List<Pickup> _pickups = new();
     private readonly Dictionary<ItemType, SpritePair> _icons;
     private readonly ParticleSystem _particles;
@@ -99,12 +97,11 @@ public sealed class PickupManager
 
     public void Spawn(Vector2 pos, ItemStack stack) => _pickups.Add(new Pickup { Stack = stack, Position = pos });
 
-    /// <summary>Moves pickups, magnetises them toward the player and returns those collected this frame.</summary>
-    public void Update(float dt, Vector2 playerPos, bool playerAlive, Func<ItemStack, int> tryCollect, World.GameWorld world)
+    /// <summary>Moves pickups (burst slide + sparkle). Nothing is collected automatically — see TryCollect.</summary>
+    public void Update(float dt, World.GameWorld world)
     {
-        for (int i = _pickups.Count - 1; i >= 0; i--)
+        foreach (var p in _pickups)
         {
-            var p = _pickups[i];
             p.Age += dt;
             // slide to a stop after the spawn burst; never end up inside a crate
             if (p.Velocity.LengthSquared() > 1f)
@@ -112,24 +109,6 @@ public sealed class PickupManager
                 p.Velocity *= MathF.Exp(-4f * dt);
                 p.Position += p.Velocity * dt;
                 var v = p.Velocity; world.ResolveCircle(ref p.Position, ref v, 8f); p.Velocity = v;
-            }
-            if (playerAlive)
-            {
-                var toPlayer = playerPos - p.Position; float d = toPlayer.Length();
-                if (d < CollectRange)
-                {
-                    int leftover = tryCollect(p.Stack);
-                    if (leftover < p.Stack.Count)
-                    {
-                        _particles.Sparks(p.Position, new Vector2(0, -1), 6, p.Def.Tint * 1.5f, 120f, 3.0f, 0.35f);
-                        if (leftover <= 0) { _pickups.RemoveAt(i); continue; }
-                        p.Stack.Count = leftover;
-                    }
-                }
-                else if (d < MagnetRange && p.Age > 0.4f)
-                {
-                    p.Position += toPlayer / d * (260f * (1f - d / MagnetRange) + 60f) * dt;
-                }
             }
             // occasional sparkle so pickups are visible in dark corners
             p.SparkleTimer -= dt;
@@ -139,6 +118,28 @@ public sealed class PickupManager
                 _particles.Emit(new Particle { Position = p.Position + Rng.InCircle(8f), Velocity = new Vector2(0, -25f), Lifetime = 0.6f, Size = 5f, Aspect = 1f, Color = p.Def.Tint * 1.6f, Drag = 1f, Emissive = true });
             }
         }
+    }
+
+    /// <summary>The pickup nearest to 'pos' within 'range', or null.</summary>
+    public Pickup? FindNearest(Vector2 pos, float range)
+    {
+        Pickup? best = null; float bestD = range * range;
+        foreach (var p in _pickups)
+        {
+            float d = (p.Position - pos).LengthSquared();
+            if (d < bestD) { bestD = d; best = p; }
+        }
+        return best;
+    }
+
+    /// <summary>Collects as much of a pickup as fits ('tryCollect' returns the leftover count).</summary>
+    public void TryCollect(Pickup p, Func<ItemStack, int> tryCollect)
+    {
+        int leftover = tryCollect(p.Stack);
+        if (leftover >= p.Stack.Count) return;                                // nothing fit
+        _particles.Sparks(p.Position, new Vector2(0, -1), 6, p.Def.Tint * 1.5f, 120f, 3.0f, 0.35f);
+        if (leftover <= 0) _pickups.Remove(p);
+        else p.Stack.Count = leftover;
     }
 
     public void Draw(SceneBatch batch)
