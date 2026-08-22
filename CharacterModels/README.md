@@ -10,6 +10,8 @@ materials, animations, lighting shader) is built at startup by the C# code in th
 ![Trees](docs/trees.png)
 ![Forest](docs/forest.png)
 ![Rain](docs/rain.png)
+![Meadow](docs/meadow.png)
+![Trample](docs/trample.png)
 
 The plaza is ringed by **procedural trees** in six styles (oak, autumn maple, pine, birch, palm, dead) that
 sway in the wind — each tree is a small skinned rig, so the same GPU skinning that moves the characters bends
@@ -40,6 +42,7 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | `T` | Cycle wind: still → calm → breezy → gale |
 | `U` | Undress / dress everyone: base-body view (skin-coloured figure, no clothing, armour, headgear or boots; hair, beard and weapon kept) — a mesh rebuild, rig and animation carry on |
 | `Y` | Hide / show the trees (collision, camera and leaf shedding follow) |
+| `I` | Hide / show the ground cover (grass, field, flowers, bushes) |
 | `N` | Toggle rain (streaks, ground splashes); leaves blow off the broadleaf trees whenever there is wind |
 | `B` | Toggle deferred (many coloured point lights) / forward (MSAA) rendering |
 | `G` | Wireframe |
@@ -62,7 +65,7 @@ opens in Blender).
 `--trees n` number of trees planted around the plaza (0 = none), `--seed n` planting/shape seed,
 `--gallery` one tree of each style in a row behind the characters, `--wind s` wind strength (0 still … 1.3 gale),
 `--perf n` run *n* frames and print average bytes allocated per frame, GC counts and CPU ms (the HUD shows the live figures; the game loop allocates 0 B/frame in Release),
-`--undressed` start in base-body view, `--no-trees` start with the trees hidden, `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
+`--grass n` blades per m² (default 38), `--no-grass` no ground cover, `--undressed` start in base-body view, `--no-trees` start with the trees hidden, `--rain [density]` start raining, `--walk [speed]` (with `--focus`) run the character into the nearest tree and print the resulting distance plus the head's lateral / fore-aft excursion (collision + wobble test).
 
 ### Scripted play-testing
 
@@ -96,6 +99,7 @@ runs. `--frames` saves numbered PNGs every `--every` seconds (plus a `final` fra
 | `Content/Character.fx` | HLSL (compiled to GLSL by MGCB): 4-bone GPU skinning, wrap-diffuse key light, hemisphere ambient, fill light, Blinn-Phong specular with Fresnel boost (per-vertex material = specular strength + shininess), rim light, 3×3 PCF shadow map, object-space procedural grain, fog, exposure tone-mapping + gamma. A second technique renders the shadow map. |
 | `Trees.cs` | `TreeBuilder` grows a trunk chain of bones (4–6 segments, stiff at the base) with branch / frond bones hanging off it, then lofts bark tubes, shaped-ellipsoid leaf masses (lumpy radius function, darker underside baked into vertex colour), conical pine tiers and serrated palm fronds through `MeshBuilder.Parametric`. `Wind` is a direction, a strength and a gust envelope that travels along the wind so downwind trees react later; `Tree.Update` rotates every bone about the cross-wind axis by `strength × gust × flex × oscillation`, with flex and frequency growing toward the tips. Foliage vertices carry a flutter weight in colour alpha that the vertex shader turns into a ripple along the normal. |
 | `Playtest.cs` | `InputScript` (timeline parser → synthetic `KeyboardState`) and `PlaytestRecorder` (PNG frames + CSV metrics). |
+| `Vegetation.cs` | Ground cover in one static mesh: grass blades (clumped by noise, root→tip colour gradient, up-biased normals), a tall golden field band with seed heads, wildflowers in single-species patches (daisy, buttercup, poppy, cornflower, bluebell), lumpy bushes with collision. Wind gusts/waves and trampling by the controlled character are computed in the vertex shader from a bend weight stored in colour alpha — no per-frame CPU work. |
 | `Weather.cs` | CPU particles drawn unlit through a `BasicEffect` after the lit scene: rain streaks stretched along velocity and faded into the fog, expanding splash rings where drops land, and leaves shed from tree crowns that tumble, flutter, drift with the gusts, settle and skitter in strong wind. |
 | `Game1.cs` | Scene, orbit camera with collision against tree trunks and the exact foliage volumes, circle push-out collision for the controlled character against tree trunks, lamp posts and other characters, orbit/follow camera, third-person control of the focused character (walk 1.6 m/s, run 4.4 m/s — tuned to the stride so feet do not slide), shadow pass (2048² R32F), floor, HUD and labels, startup options. |
 

@@ -13,7 +13,7 @@ public class Game1 : Game
     private SpriteFont _font = null!;
     private Effect _effect = null!;
     private EffectParameter _pWorld = null!, _pBones = null!;
-    private EffectParameter _pCameraPosition = null!, _pFillColor = null!, _pFillDirection = null!, _pFogColor = null!, _pFogEnd = null!, _pFogStart = null!, _pGrainStrength = null!, _pGrainTexture = null!, _pGroundColor = null!, _pLightColor = null!, _pLightDirection = null!, _pLightViewProjection = null!, _pProjection = null!, _pRimColor = null!, _pShadowMap = null!, _pShadowMapSize = null!, _pShadowStrength = null!, _pSkyColor = null!, _pTime = null!, _pView = null!, _pWindDirection = null!, _pWindStrength = null!;
+    private EffectParameter _pCameraPosition = null!, _pFillColor = null!, _pFillDirection = null!, _pFogColor = null!, _pFogEnd = null!, _pFogStart = null!, _pGrainStrength = null!, _pGrainTexture = null!, _pGroundColor = null!, _pLightColor = null!, _pLightDirection = null!, _pLightViewProjection = null!, _pProjection = null!, _pRimColor = null!, _pShadowMap = null!, _pShadowMapSize = null!, _pShadowStrength = null!, _pSkyColor = null!, _pTime = null!, _pView = null!, _pWindDirection = null!, _pTramplePos = null!, _pTrampleRadius = null!, _pWindStrength = null!;
     private static readonly RasterizerState Wireframe = new() { FillMode = FillMode.WireFrame, CullMode = CullMode.None };
     private Effect _deferredFx = null!;
     private DeferredRenderer _deferred = null!;
@@ -59,6 +59,8 @@ public class Game1 : Game
 
     private readonly List<Character> _characters = new();
     private readonly List<Tree> _trees = new();
+    private Vegetation? _vegetation;
+    private bool _vegetationHidden;
     private readonly Wind _wind = new();
     private Weather _weather = null!;
     private readonly List<(Vector3 pos, float height, Color[] colors)> _leafSources = new(), _noLeafSources = new();
@@ -127,7 +129,7 @@ public class Game1 : Game
         _font = Content.Load<SpriteFont>("Font");
         _effect = Content.Load<Effect>("Character");
         _pWorld = _effect.Parameters["World"]; _pBones = _effect.Parameters["Bones"];
-        _pCameraPosition = _effect.Parameters["CameraPosition"]; _pFillColor = _effect.Parameters["FillColor"]; _pFillDirection = _effect.Parameters["FillDirection"]; _pFogColor = _effect.Parameters["FogColor"]; _pFogEnd = _effect.Parameters["FogEnd"]; _pFogStart = _effect.Parameters["FogStart"]; _pGrainStrength = _effect.Parameters["GrainStrength"]; _pGrainTexture = _effect.Parameters["GrainTexture"]; _pGroundColor = _effect.Parameters["GroundColor"]; _pLightColor = _effect.Parameters["LightColor"]; _pLightDirection = _effect.Parameters["LightDirection"]; _pLightViewProjection = _effect.Parameters["LightViewProjection"]; _pProjection = _effect.Parameters["Projection"]; _pRimColor = _effect.Parameters["RimColor"]; _pShadowMap = _effect.Parameters["ShadowMap"]; _pShadowMapSize = _effect.Parameters["ShadowMapSize"]; _pShadowStrength = _effect.Parameters["ShadowStrength"]; _pSkyColor = _effect.Parameters["SkyColor"]; _pTime = _effect.Parameters["Time"]; _pView = _effect.Parameters["View"]; _pWindDirection = _effect.Parameters["WindDirection"]; _pWindStrength = _effect.Parameters["WindStrength"];
+        _pCameraPosition = _effect.Parameters["CameraPosition"]; _pFillColor = _effect.Parameters["FillColor"]; _pFillDirection = _effect.Parameters["FillDirection"]; _pFogColor = _effect.Parameters["FogColor"]; _pFogEnd = _effect.Parameters["FogEnd"]; _pFogStart = _effect.Parameters["FogStart"]; _pGrainStrength = _effect.Parameters["GrainStrength"]; _pGrainTexture = _effect.Parameters["GrainTexture"]; _pGroundColor = _effect.Parameters["GroundColor"]; _pLightColor = _effect.Parameters["LightColor"]; _pLightDirection = _effect.Parameters["LightDirection"]; _pLightViewProjection = _effect.Parameters["LightViewProjection"]; _pProjection = _effect.Parameters["Projection"]; _pRimColor = _effect.Parameters["RimColor"]; _pShadowMap = _effect.Parameters["ShadowMap"]; _pShadowMapSize = _effect.Parameters["ShadowMapSize"]; _pShadowStrength = _effect.Parameters["ShadowStrength"]; _pSkyColor = _effect.Parameters["SkyColor"]; _pTime = _effect.Parameters["Time"]; _pView = _effect.Parameters["View"]; _pWindDirection = _effect.Parameters["WindDirection"]; _pTramplePos = _effect.Parameters["TramplePos"]; _pTrampleRadius = _effect.Parameters["TrampleRadius"]; _pWindStrength = _effect.Parameters["WindStrength"];
         _deferredFx = Content.Load<Effect>("Deferred");
         _deferred = new DeferredRenderer(GraphicsDevice, _deferredFx);
         foreach (var (pos, color, radius, intensity, flicker) in Lamps)
@@ -149,6 +151,13 @@ public class Game1 : Game
         }
         BuildGround();
         PlantTrees((int)Program.Opt("trees", 22), (int)Program.Opt("seed", 7));
+        if (!Program.Flag("no-grass"))
+        {
+            var opt = new Vegetation.Options { BladesPerM2 = Program.Opt("grass", 38f) };
+            foreach (var t in _trees) opt.Keepouts.Add((t.Position.X, t.Position.Z, t.Radius + 0.1f));
+            foreach (var (pos, _, _, _, _) in Lamps) opt.Keepouts.Add((pos.X, pos.Z, 0.12f));
+            _vegetation = Vegetation.Build(GraphicsDevice, (int)Program.Opt("seed", 7) + 1, opt);
+        }
         _wind.Strength = Program.Opt("wind", WindPresets[_windPreset]);
         _weather = new Weather(GraphicsDevice) { Raining = Program.Flag("rain"), RainDensity = Program.Opt("rain", 1f) };
         foreach (var t in _trees) if (t.LeafColors.Length > 0) _leafSources.Add((t.Position, t.CrownHeight, t.LeafColors));
@@ -382,6 +391,7 @@ public class Game1 : Game
         if (Pressed(Keys.N)) _weather.Raining = !_weather.Raining;
         if (Pressed(Keys.U)) SetUndressed(!_undressed);
         if (Pressed(Keys.Y)) _treesHidden = !_treesHidden;
+        if (Pressed(Keys.I)) _vegetationHidden = !_vegetationHidden;
         if (Pressed(Keys.T)) { _windPreset = (_windPreset + 1) % WindPresets.Length; _wind.Strength = WindPresets[_windPreset]; }
         if (Pressed(Keys.V)) { _varied = !_varied; ApplyClips(); }
         if (Pressed(Keys.R)) { _focus = -1; _camYaw = 0; _autoOrbit = false; _camTargetGoal = new Vector3(0, 0.95f, 0); _camDistGoal = 6; _camPitch = MathHelper.ToRadians(10); }
@@ -545,6 +555,7 @@ public class Game1 : Game
         {
             if (!_treesHidden) foreach (var t in _trees) PushOut(ref c.Position, t.Position, selfR + t.Radius);
             foreach (var (pos, _, _, _, _) in Lamps) PushOut(ref c.Position, new Vector3(pos.X, 0, pos.Z), selfR + 0.07f);
+            if (_vegetation != null && !_vegetationHidden) foreach (var (bp, br) in _vegetation.Bushes) PushOut(ref c.Position, bp, selfR * 0.6f + br);
             foreach (var o in _characters) if (o != c) PushOut(ref c.Position, o.Position, selfR + 0.3f);
         }
     }
@@ -634,6 +645,8 @@ public class Game1 : Game
         _pTime.SetValue(_time);
         _pWindStrength.SetValue(_wind.Strength);
         _pWindDirection.SetValue(_wind.Direction);
+        _pTramplePos.SetValue(_focus >= 0 ? _characters[_focus].Position : new Vector3(0, -100, 0));
+        _pTrampleRadius.SetValue(0.55f);
 
         if (_useDeferred && !_wireframe)
         {
@@ -752,6 +765,7 @@ public class Game1 : Game
             gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, _groundIb.IndexCount / 3);
         }
 
+        if (!shadowPass && _vegetation != null && !_vegetationHidden) DrawSkinned(Matrix.Identity, _identityPalette, _vegetation.VertexBuffer, _vegetation.IndexBuffer);
         foreach (var c in _characters) DrawSkinned(c.World, c.Skeleton.Palette, c.VertexBuffer, c.IndexBuffer);
         if (!_treesHidden) foreach (var t in _trees) DrawSkinned(t.World, t.Skeleton.Palette, t.VertexBuffer, t.IndexBuffer);
     }
@@ -777,13 +791,13 @@ public class Game1 : Game
         "F / Tab  focus a character and take control of it (WASD + Shift)",
         "1-7  animation (bind, idle, walk, run, wave, attack, dance)   V  varied",
         "Mouse drag  orbit   Right drag  pan   Wheel  zoom   Arrows  orbit",
-        "Space auto-orbit   T wind   N rain   U undress   Y trees   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+        "Space auto-orbit   T wind   N rain   U undress   Y trees   I grass   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
     };
     private readonly string[] _hudLinesControl =
     {
         "",
         "F / Tab  next character (cycles back to overview)     Mouse drag / arrows  orbit   Wheel  zoom",
-        "1-7 animation   T wind   N rain   U undress   Y trees   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
+        "1-7 animation   T wind   N rain   U undress   Y trees   I grass   B forward/deferred   L/K rotate light   G wireframe   R reset   Esc quit"
     };
     private int _hudControlFocus = -2;
     private string _hudStats = "";
@@ -815,6 +829,7 @@ public class Game1 : Game
         sb.Append("     Focus: ").Append(_focus < 0 ? "all" : _characters[_focus].Spec.Name);
         sb.Append("     Trees: ").Append(_treesHidden ? 0 : _trees.Count);
         if (_undressed) sb.Append("   Base bodies");
+        if (_vegetation != null && !_vegetationHidden) sb.Append("   Grass: ").Append(_vegetation.Blades).Append(" blades, ").Append(_vegetation.Flowers).Append(" flowers");
         sb.Append("   Wind: ").Append(_wind.Strength <= 0 ? "still" : _wind.Strength < 0.5f ? "calm" : _wind.Strength < 1f ? "breezy" : "gale");
         sb.Append(" (").AppendFixed(_wind.Strength, 2).Append(')');
         sb.Append("   Rain: ").Append(_weather.Raining ? "on" : "off");

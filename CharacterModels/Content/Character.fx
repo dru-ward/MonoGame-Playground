@@ -34,6 +34,8 @@ float3 FogColor;
 float  Time;
 float  WindStrength;
 float3 WindDirection;
+float3 TramplePos;          // world position that flattens grass (the controlled character)
+float  TrampleRadius;
 
 texture ShadowMap;
 sampler ShadowSampler = sampler_state
@@ -75,15 +77,42 @@ struct VSOutput
 
 // Foliage flutter: vertices with colour alpha < 1 ripple along their normal at high frequency.
 // Phase comes from world position so neighbouring leaves move coherently and different trees differ.
+// Colour alpha is a per-vertex motion weight with two ranges:
+//   a >= 0.5 : foliage flutter (trees, bushes) — small ripple along the normal, amount = (1 - a) * 2
+//   a <  0.5 : ground-cover bend (grass, flowers) — weight (0.5 - a) * 2 leans the vertex downwind with travelling
+//              waves and lets the controlled character trample it flat.
 void Flutter(inout float4 worldPos, float3 worldNrm, float alpha)
 {
-    float amount = (1.0 - alpha) * WindStrength;
-    if (amount <= 0.0) return;
-    float ph = dot(worldPos.xyz, float3(3.1, 2.3, 2.7));
-    float wave = sin(Time * 7.0 + ph) * 0.6 + sin(Time * 11.3 + ph * 1.7) * 0.4;
-    float gust = 0.6 + 0.4 * sin(Time * 0.9 + dot(worldPos.xyz, WindDirection) * 0.35);
-    worldPos.xyz += worldNrm * wave * gust * amount * 0.07;
-    worldPos.xyz += WindDirection * gust * amount * 0.03;
+    if (alpha >= 0.5)
+    {
+        float amount = (1.0 - alpha) * 2.0 * WindStrength;
+        if (amount <= 0.0) return;
+        float ph = dot(worldPos.xyz, float3(3.1, 2.3, 2.7));
+        float wave = sin(Time * 7.0 + ph) * 0.6 + sin(Time * 11.3 + ph * 1.7) * 0.4;
+        float gust = 0.6 + 0.4 * sin(Time * 0.9 + dot(worldPos.xyz, WindDirection) * 0.35);
+        worldPos.xyz += worldNrm * wave * gust * amount * 0.035 + WindDirection * gust * amount * 0.015;
+        return;
+    }
+    float bend = (0.5 - alpha) * 2.0;
+    // Wind: a slow gust front travelling downwind, a broad wave and a fine shimmer.
+    float along = dot(worldPos.xz, WindDirection.xz);
+    float gust = 0.5 + 0.5 * sin(Time * 0.7 - along * 0.35 + sin(worldPos.x * 0.4 + worldPos.z * 0.6) * 1.5);
+    float wave = 0.5 * sin(Time * 1.7 - along * 1.1) + 0.3 * sin(Time * 2.9 + worldPos.x * 1.3 - worldPos.z * 0.9) + 0.2 * sin(Time * 5.7 + worldPos.x * 5.1 + worldPos.z * 3.7);
+    float amt = WindStrength * bend * (0.35 + 0.65 * gust);
+    float3 lean = WindDirection * (0.10 * amt + 0.09 * amt * wave);
+    lean.y = -(0.05 * amt + 0.04 * amt * abs(wave)) * bend;            // tips drop as they lean
+    worldPos.xyz += lean;
+    // Trample: push blades radially away from the character and press them down.
+    float2 d = worldPos.xz - TramplePos.xz;
+    float dist = length(d);
+    if (dist < TrampleRadius)
+    {
+        float t = 1.0 - dist / TrampleRadius;
+        t = t * t * (3.0 - 2.0 * t);
+        float2 dir = dist > 0.001 ? d / dist : float2(1, 0);
+        worldPos.xz += dir * t * 0.30 * bend;
+        worldPos.y -= t * 0.18 * bend;
+    }
 }
 
 void Skin(inout float4 position, inout float3 normal, float4 indices, float4 weights)
