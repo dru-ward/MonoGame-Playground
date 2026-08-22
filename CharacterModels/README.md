@@ -40,7 +40,7 @@ The content pipeline compiles `Content/Character.fx` and the sprite font on firs
 | `H` | Draw / sheathe the weapon (reach to the back or hip sockets) |
 | `Q` / `R` / `C` | Light / heavy / special attack for the controlled character's weapon (auto-draws first; a press during the recovery window buffers and chains). Knight: cut, overhead, shield bash · Barbarian: sweep, smash, whirlwind · Rogue: stabs, lunge, flurry · Mage: bolt, nova, channel · Ranger: shot, full draw, volley |
 | `E` / `X` | Wave / dance (cancelled by moving) |
-| Mouse drag / arrows | Orbit camera (inverted: drag left turns the view right, drag up looks down; `--no-invert` for direct) · right-drag pans · wheel zooms |
+| Mouse drag / arrows | Orbit camera (inverted: drag left turns the view right, drag up looks down; `--no-invert` for direct; passes through scenery) · right-drag pans · wheel zooms |
 | `Space` | Toggle auto-orbit turntable |
 | `L` / `K` | Rotate the key light |
 | `T` | Cycle wind: still → calm → breezy → gale |

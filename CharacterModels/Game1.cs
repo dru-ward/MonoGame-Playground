@@ -572,32 +572,11 @@ public class Game1 : Game
     /// </summary>
     private float CameraCollision(float dist)
     {
+        // The camera passes through scenery (no pull-in against trees or buildings); only the ground is respected.
         var dir = Vector3.Transform(Vector3.Backward, Matrix.CreateRotationX(-_camPitch) * Matrix.CreateRotationY(_camYaw));
         float best = dist;
-        for (int i = 0; i < (_treesHidden ? 0 : _trees.Count); i++)
-        {
-            var t = _trees[i];
-            if (Vector3.DistanceSquared(t.Position, _camTarget) > (dist + 3f) * (dist + 3f)) continue;
-            float h = t.CrownHeight;
-            for (int k = 0; k < 6; k++)   // spheres every ~0.5 m so the ray cannot slip between them
-                best = MathF.Min(best, RayHit(_camTarget, dir, t.Position + new Vector3(0, 0.3f + h * 0.16f * k, 0), t.Radius + 0.3f));
-            // Exact foliage volumes recorded by the builder (tree-local -> world by yaw + position).
-            var world = t.World;
-            for (int f = 0; f < t.Foliage.Count; f++)
-            {
-                var (c, r) = t.Foliage[f];
-                best = MathF.Min(best, RayHit(_camTarget, dir, Vector3.Transform(c, world), r + 0.1f));
-            }
-        }
-        if (_structures != null)
-        {
-            foreach (var b in _structures.Boxes) best = MathF.Min(best, RayBox(_camTarget, dir, b));
-            foreach (var (sc, sr) in _structures.Circles)
-                for (int k = 0; k < 4; k++) best = MathF.Min(best, RayHit(_camTarget, dir, sc + new Vector3(0, 0.4f + k * 0.9f, 0), sr + 0.2f));
-        }
-        // Ground plane: keep the eye at least 0.25 m up.
         if (dir.Y < -1e-4f) best = MathF.Min(best, (0.25f - _camTarget.Y) / dir.Y);
-        return MathHelper.Clamp(best - 0.15f, 1.2f, dist);
+        return MathHelper.Clamp(best, 1.2f, dist);
     }
 
     /// <summary>Slab test: distance along the ray to where it enters the box (+inf on a miss or when starting inside).</summary>

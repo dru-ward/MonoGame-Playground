@@ -137,6 +137,58 @@ public readonly struct PoseWriter
         _pose.Rotations[ia] = weight >= 1 ? qArm : Quaternion.Slerp(_pose.Rotations[ia], qArm, weight);
         _pose.Rotations[ifo] = weight >= 1 ? qFore : Quaternion.Slerp(_pose.Rotations[ifo], qFore, weight);
     }
+
+    /// <summary>
+    /// Places the wrist at <paramref name="target"/> (via ArmIK) and then rotates the hand so the weapon bone's axis
+    /// (which carries the bind grip rotation) points along <paramref name="weaponDir"/>, with the weapon's
+    /// "edge/blade" side turned toward <paramref name="edgeDir"/>. All in character space.
+    /// </summary>
+    public void WeaponIK(int side, Vector3 target, Vector3 elbowHint, Vector3 weaponDir, Vector3 edgeDir, float weight = 1f)
+    {
+        ArmIK(side, target, elbowHint, weight);
+        string L = side > 0 ? "L" : "R";
+        string handName = BoneNames.Of("hand", L), weaponName = BoneNames.Of("weapon", L);
+        if (!_skel.Has(weaponName) || weight <= 0) return;
+        var hand = _skel[handName]; var weapon = _skel[weaponName];
+        // Weapon bone local axis: the weapon mesh runs along -Y of the weapon bone; in the hand frame that axis is
+        // BindRotation applied to -Y. Its "edge" (blade forward) is BindRotation applied to +Z.
+        // Weapon meshes are built hanging from the hand toward -Y *in bind space*; the weapon bone's BindRotation turns
+        // that into the grip. Measured: the head of the weapon lies along +Y of the rotated bone frame (see probe in
+        // the combat skill), and the blade edge along -Z.
+        var axisInHand = Vector3.Transform(-Vector3.UnitY, weapon.BindRotation);   // measured: the weapon's head is at the bone's -Y end
+        var edgeInHand = Vector3.Transform(Vector3.UnitZ, weapon.BindRotation);
+        // Desired hand world rotation: map axisInHand -> weaponDir, edgeInHand -> edgeDir (orthonormalised).
+        var wd = Vector3.Normalize(weaponDir);
+        var ed = edgeDir - wd * Vector3.Dot(edgeDir, wd);
+        if (ed.LengthSquared() < 1e-4f) { ed = Vector3.Cross(wd, Vector3.Up); if (ed.LengthSquared() < 1e-4f) ed = Vector3.Cross(wd, Vector3.Backward); }
+        ed.Normalize();
+        var handFrame = Basis(axisInHand, edgeInHand);
+        var worldFrame = Basis(wd, ed);
+        var desiredWorld = Matrix.Invert(handFrame) * worldFrame;          // rotation taking the hand frame onto the world frame
+        var parentWorld = WorldOf(hand.Parent); parentWorld.Translation = Vector3.Zero;
+        var bindInv = Matrix.Invert(Matrix.CreateFromQuaternion(hand.BindRotation));
+        var local = Quaternion.CreateFromRotationMatrix(desiredWorld * Matrix.Invert(parentWorld));
+        // Remove the hand's constant bind rotation (local = Rotation * BindRotation in Skeleton.Update).
+        local = Quaternion.CreateFromRotationMatrix(Matrix.CreateFromQuaternion(local) * bindInv);
+        int ih = hand.Index;
+        _pose.Rotations[ih] = weight >= 1 ? local : Quaternion.Slerp(_pose.Rotations[ih], local, weight);
+    }
+
+    private static Matrix Basis(Vector3 a, Vector3 b)
+    {
+        a.Normalize(); b = b - a * Vector3.Dot(a, b); b.Normalize();
+        var c = Vector3.Cross(a, b);
+        return new Matrix(a.X, a.Y, a.Z, 0, b.X, b.Y, b.Z, 0, c.X, c.Y, c.Z, 0, 0, 0, 0, 1);
+    }
+
+    /// <summary>Character-space position of a point on a weapon: offset along the weapon axis from the grip.</summary>
+    public Vector3 WeaponPoint(int side, float alongAxis)
+    {
+        string L = side > 0 ? "L" : "R";
+        var wb = _skel[BoneNames.Of("weapon", L)];
+        var world = WorldOf(wb.Index);
+        return world.Translation + Vector3.TransformNormal(-Vector3.UnitY, world) * alongAxis;
+    }
 }
 
 /// <summary>

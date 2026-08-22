@@ -63,6 +63,24 @@ From game-animation practice ([MoCap Online melee guide](https://mocaponline.com
   **Present the bow**: the mesh is built hanging along the hand's −Y, so it lies along an extended arm; rotate
   the weapon bone −35° (stance) → −90° (arm raised) about its local X so the limbs stand vertical.
 
+## 4b. Author attacks as hand paths, not arm angles (the fix for "janky")
+The first version drove arm/forearm angles per attack. It looked wrong in every way that matters: the weapon
+went behind the back, two-handed grips separated, swings had no arc. Swing arcs are what the *hand* does, so:
+* `PoseWriter.WeaponIK(side, wristTarget, elbowHint, weaponDir, edgeDir, weight)` — ArmIK for the wrist, then
+  the hand rotation is solved so the weapon bone's axis lies along `weaponDir` with its edge toward `edgeDir`
+  (build two orthonormal bases and map one onto the other, then strip the hand's BindRotation).
+* `PoseWriter.WeaponPoint(side, alongAxis)` returns a point on the weapon in character space — the off-hand of a
+  two-handed weapon is `ArmIK(1, WeaponPoint(-1, 0.42))` **every frame**, so the grip never separates.
+* An attack is then: a Catmull-Rom **path** of wrist positions + a path of weapon directions, `SwingArc(...)`
+  = rest → path[0] over the wind-up, Whip along the path, path[^1] → rest during recovery. Trunk and Legs use
+  the same phase values. ~12 numbers per attack, all in metres you can picture.
+* **Measure the weapon axis before trusting it.** A `--wdir x,y,z` probe that poses the stance with a requested
+  direction and prints the weapon bone's world ±Y proved the IK was right while the picture was "wrong": the
+  axe *head* sits at the bone's −Y end. One sign flip. Also view probes from the front — from behind, "forward"
+  hides the head behind the body and reads as a bug.
+* Parallel edge/axis (asking for "up" with edge "up") made the basis degenerate → NaN; fall back to a cross with
+  Backward when the cross with Up vanishes.
+
 ## 5. Gotchas (the expensive ones)
 * **NaN poisons everything.** `MathF.Pow(1 − (x−0.65)/0.35, 1.8)` at x = 1 sees a *slightly negative* base
   (rounding) → NaN → every bone NaN → the character silently vanishes. Clamp the base. Keep a canary in the
